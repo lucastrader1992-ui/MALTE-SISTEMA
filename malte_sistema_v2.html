@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Malte Distribuidora</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --bg:#0a0c12;--bg2:#12151f;--bg3:#1a1e2e;--card:#161928;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --gold:#d4a017;--gold2:#f0c040;--gold3:#ffd96a;--goldl:rgba(212,160,23,0.12);
+  --green:#27ae60;--greenl:rgba(39,174,96,0.12);
+  --red:#c0392b;--redl:rgba(192,57,43,0.12);
+  --blue:#2980b9;--bluel:rgba(41,128,185,0.12);
+  --purple:#7d3c98;--purplel:rgba(125,60,152,0.12);
+  --text:#f0f2fa;--text2:#8a90b0;--text3:#4a5070;
+  --radius:14px;--radius-sm:9px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+input,button,select{font-family:inherit;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px;}
+
+#loading-screen{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;
+}
+.spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+#login-screen{
+  min-height:100vh;display:none;align-items:center;justify-content:center;
+  background:radial-gradient(ellipse 80% 60% at 50% -10%,rgba(212,160,23,0.15) 0%,transparent 60%);
+}
+.login-box{
+  background:var(--card);border:1px solid rgba(212,160,23,0.2);
+  border-radius:20px;padding:44px 40px;width:380px;text-align:center;
+}
+.login-brand-icon{
+  width:64px;height:64px;background:var(--goldl);border:1px solid rgba(212,160,23,0.3);
+  border-radius:16px;display:flex;align-items:center;justify-content:center;
+  margin:0 auto 14px;font-size:28px;
+}
+.login-brand h1{font-size:22px;font-weight:700;color:var(--gold2);}
+.login-brand p{color:var(--text2);font-size:12px;margin-top:3px;letter-spacing:2px;text-transform:uppercase;margin-bottom:28px;}
+.login-roles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;}
+.role-btn{padding:11px 8px;border-radius:var(--radius-sm);border:1px solid var(--border2);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s;}
+.role-btn.active{border-color:var(--gold);color:var(--gold3);background:var(--goldl);}
+.field{margin-bottom:12px;text-align:left;}
+.field label{display:block;font-size:11px;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;}
+.field input{width:100%;padding:12px 14px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:14px;outline:none;transition:border 0.2s;}
+.field input:focus{border-color:var(--gold);}
+.login-btn{width:100%;padding:13px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a0c12;font-weight:700;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:15px;margin-top:8px;transition:opacity 0.2s;}
+.login-btn:hover{opacity:0.9;}
+.login-err{color:var(--red);font-size:13px;margin-top:10px;min-height:20px;}
+
+#app{display:none;flex-direction:column;min-height:100vh;}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;padding:0 20px;justify-content:space-between;position:sticky;top:0;z-index:200;}
+.topbar-logo{font-size:17px;font-weight:700;color:var(--gold2);}
+.topbar-badge{background:var(--goldl);border:1px solid rgba(212,160,23,0.25);color:var(--gold3);font-size:10px;padding:3px 8px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;font-weight:600;}
+.topbar-right{display:flex;align-items:center;gap:8px;}
+.user-pill{background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:5px 12px;font-size:12px;color:var(--text2);}
+.icon-btn{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);width:34px;height:34px;cursor:pointer;color:var(--text2);font-size:16px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
+.icon-btn:hover{border-color:var(--red);color:var(--red);}
+.nav{background:var(--bg2);border-bottom:1px solid var(--border);display:flex;padding:0 16px;gap:2px;overflow-x:auto;}
+.nav-btn{padding:13px 16px;border:none;background:none;color:var(--text3);cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid transparent;white-space:nowrap;transition:all 0.2s;}
+.nav-btn:hover{color:var(--text2);}
+.nav-btn.active{color:var(--gold2);border-bottom-color:var(--gold);}
+.content{flex:1;padding:24px 20px;max-width:1200px;margin:0 auto;width:100%;}
+
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:500;align-items:center;justify-content:center;padding:16px;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:28px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto;}
+.modal h3{font-size:17px;font-weight:600;margin-bottom:20px;}
+.modal-field{margin-bottom:14px;}
+.modal-field label{display:block;font-size:11px;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:0.8px;}
+.modal-field input,.modal-field select{width:100%;padding:10px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:14px;outline:none;}
+.modal-field input:focus,.modal-field select:focus{border-color:var(--gold);}
+.modal-field select option{background:var(--bg3);}
+.modal-actions{display:flex;gap:8px;margin-top:20px;}
+.btn{padding:10px 20px;border-radius:var(--radius-sm);border:1px solid var(--border2);cursor:pointer;font-size:13px;font-weight:600;transition:all 0.2s;}
+.btn-primary{background:var(--gold);color:#0a0c12;border-color:var(--gold);}
+.btn-primary:hover{background:var(--gold2);}
+.btn-secondary{background:var(--bg3);color:var(--text2);}
+.btn-secondary:hover{color:var(--text);}
+.btn-danger{background:var(--redl);color:var(--red);border-color:rgba(192,57,43,0.3);}
+.btn-danger:hover{background:var(--red);color:#fff;}
+.btn-green{background:var(--greenl);color:var(--green);border-color:rgba(39,174,96,0.3);}
+.btn-green:hover{background:var(--green);color:#fff;}
+.btn-sm{padding:7px 14px;font-size:12px;}
+
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px;}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;}
+.stat-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;}
+.stat-value{font-size:26px;font-weight:700;line-height:1;}
+.stat-sub{font-size:12px;color:var(--text3);margin-top:5px;}
+.stat-gold .stat-value{color:var(--gold2);}
+.stat-green .stat-value{color:var(--green);}
+.stat-red .stat-value{color:var(--red);}
+.stat-blue .stat-value{color:var(--blue);}
+
+.section-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.section-title{font-size:15px;font-weight:600;}
+.section-sub{font-size:12px;color:var(--text2);margin-top:2px;}
+
+.table-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px;}
+table{width:100%;border-collapse:collapse;}
+thead tr{background:var(--bg3);}
+th{padding:11px 14px;text-align:left;font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.8px;font-weight:600;}
+td{padding:11px 14px;font-size:13px;border-top:1px solid var(--border);}
+tr:hover td{background:rgba(255,255,255,0.02);}
+
+.badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+.badge-green{background:var(--greenl);color:var(--green);}
+.badge-red{background:var(--redl);color:var(--red);}
+.badge-gold{background:var(--goldl);color:var(--gold3);}
+.badge-blue{background:var(--bluel);color:var(--blue);}
+
+.mesas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;}
+.mesa-card{background:var(--card);border:2px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center;cursor:pointer;transition:all 0.2s;}
+.mesa-card:hover{transform:translateY(-2px);}
+.mesa-card.ocupada{border-color:rgba(192,57,43,0.4);background:var(--redl);}
+.mesa-card.livre{border-color:rgba(39,174,96,0.3);}
+.mesa-num{font-size:22px;font-weight:700;margin-bottom:4px;}
+.mesa-status{font-size:11px;font-weight:500;}
+.mesa-total{font-size:13px;font-weight:600;color:var(--gold2);margin-top:6px;}
+
+.pay-methods{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+.pay-btn{padding:12px;border-radius:var(--radius-sm);border:1px solid var(--border2);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;text-align:center;transition:all 0.2s;}
+.pay-btn.sel{border-color:var(--gold);color:var(--gold3);background:var(--goldl);}
+
+.alert{padding:12px 16px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:16px;}
+.alert-warn{background:var(--goldl);border:1px solid rgba(212,160,23,0.3);color:var(--gold3);}
+.alert-danger{background:var(--redl);border:1px solid rgba(192,57,43,0.3);color:#e88;}
+.alert-success{background:var(--greenl);border:1px solid rgba(39,174,96,0.3);color:#5d9;}
+
+.senha-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;}
+.senha-overlay.open{display:flex;}
+.senha-box{background:var(--card);border:1px solid rgba(212,160,23,0.3);border-radius:18px;padding:32px;width:320px;text-align:center;}
+.senha-box h3{font-size:16px;margin-bottom:6px;}
+.senha-box p{font-size:13px;color:var(--text2);margin-bottom:20px;}
+.senha-box input{width:100%;padding:12px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:18px;text-align:center;letter-spacing:4px;outline:none;margin-bottom:12px;}
+.senha-box input:focus{border-color:var(--gold);}
+
+.item-row{display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border-radius:var(--radius-sm);padding:10px 14px;border:1px solid var(--border);margin-bottom:6px;}
+.item-name{font-size:14px;font-weight:500;}
+.item-meta{font-size:12px;color:var(--text2);}
+.qty-ctrl{display:flex;align-items:center;gap:6px;}
+.qty-btn{width:28px;height:28px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;}
+.qty-btn:hover{border-color:var(--gold);}
+.qty-num{font-size:14px;font-weight:600;min-width:20px;text-align:center;}
+
+.prod-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;transition:all 0.2s;}
+.prod-card:hover{border-color:var(--gold);transform:translateY(-1px);}
+.empty{text-align:center;padding:40px 20px;color:var(--text3);}
+.empty-icon{font-size:36px;margin-bottom:10px;}
+
+.ia-card{background:var(--card);border:1px solid rgba(125,60,152,0.3);border-radius:var(--radius);padding:16px;margin-bottom:10px;}
+
+@media(max-width:600px){.stats-grid{grid-template-columns:1fr 1fr;}.content{padding:14px 10px;}}
+</style>
+</head>
+<body>
+
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <div style="color:var(--text2);font-size:14px">Carregando Malte Sistema...</div>
+</div>
+
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-brand">
+      <div class="login-brand-icon">🍺</div>
+      <h1>Malte Distribuidora</h1>
+      <p>Sistema de Gestão</p>
+    </div>
+    <div class="login-roles">
+      <button class="role-btn active" onclick="setRole('adm')">👑 Administrador</button>
+      <button class="role-btn" onclick="setRole('caixa')">🧾 Caixa</button>
+    </div>
+    <div class="field"><label>Usuário</label><input id="login-user" type="text" value="adm"></div>
+    <div class="field"><label>Senha</label><input id="login-pass" type="password" placeholder="••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="login-btn" onclick="doLogin()">Entrar no Sistema</button>
+    <div class="login-err" id="login-err"></div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text3)">ADM: senha 1234 | Caixa: senha 5678</div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="topbar-logo">🍺 Malte</span>
+      <span class="topbar-badge" id="top-role-badge">ADM</span>
+    </div>
+    <div class="topbar-right">
+      <span class="user-pill" id="top-user-pill">Administrador</span>
+      <button class="icon-btn" onclick="doLogout()" title="Sair">✕</button>
+    </div>
+  </div>
+  <div class="nav" id="main-nav">
+    <button class="nav-btn active" onclick="goTab('dashboard')">📊 Dashboard</button>
+    <button class="nav-btn" onclick="goTab('mesas')">🍺 Mesas</button>
+    <button class="nav-btn" onclick="goTab('balcao')">🛒 Balcão</button>
+    <button class="nav-btn adm-only" onclick="goTab('estoque')">📦 Estoque</button>
+    <button class="nav-btn adm-only" onclick="goTab('produtos')">🏷️ Produtos</button>
+    <button class="nav-btn adm-only" onclick="goTab('relatorios')">📈 Relatórios</button>
+    <button class="nav-btn adm-only" onclick="goTab('ia')">🤖 Inteligência</button>
+  </div>
+  <div class="content" id="tab-content"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>
+</div>
+
+<div class="senha-overlay" id="senha-overlay">
+  <div class="senha-box">
+    <h3>🔐 Área Restrita</h3>
+    <p id="senha-msg">Digite a senha do Administrador</p>
+    <input type="password" id="senha-input" placeholder="••••••" onkeydown="if(event.key==='Enter')checkSenha()">
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeSenha()">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1" onclick="checkSenha()">Confirmar</button>
+    </div>
+    <div style="color:var(--red);font-size:13px;margin-top:8px;min-height:18px" id="senha-err"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://akicvaywryppktjiccpi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_KlSN5wVH24AYhF7kjEU0pg_NnVl2SQg';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const USERS = {adm:{role:'adm',nome:'Administrador',senha:'1234'},caixa:{role:'caixa',nome:'Caixa',senha:'5678'}};
+const ADM_SENHA = '1234';
+let currentUser = null;
+let currentRole = 'adm';
+let currentTab = 'dashboard';
+let senhaCallback = null;
+let balcaoItens = [];
+let payAtual = 'dinheiro';
+
+// ── INIT ──
+window.addEventListener('load', async () => {
+  document.getElementById('loading-screen').style.display='flex';
+  try {
+    const {data,error} = await sb.from('produtos').select('id').limit(1);
+    if(error) throw error;
+  } catch(e) {
+    console.error('Supabase error:',e);
+  }
+  document.getElementById('loading-screen').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+});
+
+// ── AUTH ──
+function setRole(r){
+  currentRole=r;
+  document.querySelectorAll('.role-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('login-user').value=r==='adm'?'adm':'caixa';
+}
+function doLogin(){
+  const u=document.getElementById('login-user').value.trim().toLowerCase();
+  const p=document.getElementById('login-pass').value;
+  const user=USERS[u];
+  if(!user||user.senha!==p){document.getElementById('login-err').textContent='Usuário ou senha incorretos.';return;}
+  currentUser=user;
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('top-user-pill').textContent=user.nome;
+  document.getElementById('top-role-badge').textContent=user.role.toUpperCase();
+  if(user.role!=='adm') document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
+  goTab('dashboard');
+}
+function doLogout(){
+  currentUser=null;balcaoItens=[];
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('login-pass').value='';
+  document.getElementById('login-err').textContent='';
+}
+
+// ── SENHA ADM ──
+function pedirSenhaAdm(msg,cb){
+  if(currentUser&&currentUser.role==='adm'){cb();return;}
+  senhaCallback=cb;
+  document.getElementById('senha-msg').textContent=msg||'Digite a senha do Administrador';
+  document.getElementById('senha-input').value='';
+  document.getElementById('senha-err').textContent='';
+  document.getElementById('senha-overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('senha-input').focus(),100);
+}
+function checkSenha(){
+  if(document.getElementById('senha-input').value===ADM_SENHA){closeSenha();if(senhaCallback)senhaCallback();}
+  else document.getElementById('senha-err').textContent='Senha incorreta.';
+}
+function closeSenha(){document.getElementById('senha-overlay').classList.remove('open');senhaCallback=null;}
+
+// ── MODAL ──
+function openModal(html){document.getElementById('modal-content').innerHTML=html;document.getElementById('modal-overlay').classList.add('open');}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('open');}
+document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
+
+// ── NAV ──
+function goTab(tab){
+  currentTab=tab;
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>{if(b.textContent.toLowerCase().includes(tab.substring(0,4)))b.classList.add('active');});
+  const c=document.getElementById('tab-content');
+  c.innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  if(tab==='dashboard')renderDashboard();
+  else if(tab==='mesas')renderMesas();
+  else if(tab==='balcao')renderBalcao();
+  else if(tab==='estoque')renderEstoque();
+  else if(tab==='produtos')renderProdutos();
+  else if(tab==='relatorios')renderRelatorios();
+  else if(tab==='ia')renderIA();
+}
+
+// ── FORMATTERS ──
+function fmt(v){return'R$ '+Number(v||0).toFixed(2).replace('.',',');}
+function fmtDate(d){const dt=new Date(d);return dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+function fmtDateFull(d){const dt=new Date(d);return dt.toLocaleDateString('pt-BR')+' '+fmtDate(d);}
+
+function selPay(tipo){
+  payAtual=tipo;
+  document.querySelectorAll('.pay-btn').forEach(b=>b.classList.remove('sel'));
+  const el=document.getElementById('pay-'+tipo);
+  if(el)el.classList.add('sel');
+}
+
+// ── DASHBOARD ──
+async function renderDashboard(){
+  const [prods,vendas,mesas]=await Promise.all([
+    sb.from('produtos').select('*'),
+    sb.from('vendas').select('*').order('criado_em',{ascending:false}).limit(50),
+    sb.from('mesas').select('*')
+  ]);
+  const P=prods.data||[];const V=vendas.data||[];const M=mesas.data||[];
+  const hoje=new Date().toDateString();
+  const hojeV=V.filter(v=>new Date(v.criado_em).toDateString()===hoje);
+  const totalHoje=hojeV.reduce((s,v)=>s+Number(v.total),0);
+  const mesasOcupadas=M.filter(m=>m.status==='ocupada').length;
+  const baixoEstoque=P.filter(p=>p.estoque<20).length;
+
+  document.getElementById('tab-content').innerHTML=`
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Vendas Hoje</div><div class="stat-value">${fmt(totalHoje)}</div><div class="stat-sub">${hojeV.length} transações</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Mesas Ocupadas</div><div class="stat-value">${mesasOcupadas}</div><div class="stat-sub">de ${M.length} mesas</div></div>
+    <div class="stat-card stat-blue"><div class="stat-label">Produtos</div><div class="stat-value">${P.length}</div><div class="stat-sub">cadastrados</div></div>
+    <div class="stat-card ${baixoEstoque>0?'stat-red':''}"><div class="stat-label">Estoque Baixo</div><div class="stat-value">${baixoEstoque}</div><div class="stat-sub">produtos críticos</div></div>
+  </div>
+  ${baixoEstoque>0?`<div class="alert alert-danger">⚠️ ${baixoEstoque} produto(s) com estoque abaixo de 20 unidades!</div>`:''}
+  <div class="section-hdr"><div class="section-title">Últimas Vendas</div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
+      <tbody>
+        ${V.slice(0,10).map(v=>`<tr>
+          <td>${fmtDate(v.criado_em)}</td><td>${v.tipo}</td>
+          <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
+          <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
+          <td>${v.operador||''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ── MESAS ──
+async function renderMesas(){
+  const [mesas,itens]=await Promise.all([
+    sb.from('mesas').select('*').order('id'),
+    sb.from('mesa_itens').select('*')
+  ]);
+  const M=mesas.data||[];const I=itens.data||[];
+  const totaisMesas={};
+  I.forEach(i=>{totaisMesas[i.mesa_id]=(totaisMesas[i.mesa_id]||0)+Number(i.preco)*i.qty;});
+  const ocup=M.filter(m=>m.status==='ocupada').length;
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr">
+    <div><div class="section-title">Mesas</div><div class="section-sub">${ocup} ocupadas de ${M.length}</div></div>
+  </div>
+  <div class="mesas-grid">
+    ${M.map(m=>`
+    <div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})">
+      <div class="mesa-num" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.id}</div>
+      <div class="mesa-status" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.status==='ocupada'?'Ocupada':'Livre'}</div>
+      ${m.status==='ocupada'&&totaisMesas[m.id]?`<div class="mesa-total">${fmt(totaisMesas[m.id])}</div>`:''}
+    </div>`).join('')}
+  </div>`;
+}
+
+async function abrirMesa(id){
+  const {data:m}=await sb.from('mesas').select('*').eq('id',id).single();
+  if(m.status==='livre'){
+    openModal(`<h3>🍺 Mesa ${id}</h3>
+    <p style="color:var(--text2);font-size:14px;margin-bottom:20px">Abrir a mesa ${id}?</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button>
+    </div>`);
+  } else {
+    await modalMesaAberta(id);
+  }
+}
+
+async function confirmarAbrirMesa(id){
+  await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);
+  closeModal();renderMesas();
+}
+
+async function modalMesaAberta(id){
+  const [{data:m},{data:itens},{data:prods}]=await Promise.all([
+    sb.from('mesas').select('*').eq('id',id).single(),
+    sb.from('mesa_itens').select('*').eq('mesa_id',id),
+    sb.from('produtos').select('*').order('nome')
+  ]);
+  const I=itens||[];
+  const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
+  openModal(`
+  <h3>🍺 Mesa ${id}</h3>
+  <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
+    <span style="color:var(--text2);font-size:13px">Aberta às ${fmtDate(m.aberta_em)}</span>
+    <span style="font-size:18px;font-weight:700;color:var(--gold2)">${fmt(total)}</span>
+  </div>
+  <div style="margin-bottom:14px;">
+    <select id="mesa-prod-sel" style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);margin-bottom:8px;">
+      ${(prods||[]).map(p=>`<option value="${p.id}" data-preco="${p.preco}">${p.emoji} ${p.nome} — ${fmt(p.preco)}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:8px;">
+      <input type="number" id="mesa-qty" value="1" min="1" style="width:70px;padding:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);">
+      <button class="btn btn-primary" style="flex:1" onclick="addItemMesa(${id})">+ Adicionar</button>
+    </div>
+  </div>
+  <div style="max-height:200px;overflow-y:auto;margin-bottom:14px;">
+    ${I.length===0?'<div class="empty"><div class="empty-icon">🍽️</div><p>Nenhum item</p></div>':
+    I.map(i=>`<div class="item-row">
+      <div><div class="item-name">${i.nome}</div><div class="item-meta">${i.qty}x ${fmt(i.preco)} = <b style="color:var(--gold2)">${fmt(Number(i.preco)*i.qty)}</b></div></div>
+      <button class="btn btn-danger btn-sm" onclick="removerItemMesa(${i.id},${id})">−</button>
+    </div>`).join('')}
+  </div>
+  ${I.length>0?`
+  <div style="border-top:1px solid var(--border);padding-top:12px;">
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Pagamento:</div>
+    <div class="pay-methods">
+      <button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button>
+      <button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button>
+      <button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button>
+      <button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button>
+      <button class="btn btn-danger" style="flex:1" onclick="fecharMesa(${id})">✓ Fechar Mesa</button>
+    </div>
+  </div>`:`
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button>
+    <button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button>
+  </div>`}`);
+}
+
+async function addItemMesa(mesaId){
+  const sel=document.getElementById('mesa-prod-sel');
+  const pid=parseInt(sel.value);
+  const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);
+  const qty=parseInt(document.getElementById('mesa-qty').value)||1;
+  const {data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();
+  const {data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).single();
+  if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}
+  else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}
+  await modalMesaAberta(mesaId);
+}
+
+async function removerItemMesa(itemId,mesaId){
+  const doRemover=async()=>{
+    await sb.from('mesa_itens').delete().eq('id',itemId);
+    await modalMesaAberta(mesaId);
+  };
+  if(currentUser.role==='adm'){doRemover();}
+  else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',doRemover);}
+}
+
+async function fecharMesa(id){
+  const {data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);
+  const I=itens||[];
+  const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
+  const {data:venda}=await sb.from('vendas').insert({tipo:`Mesa ${id}`,total,pagamento:payAtual,operador:currentUser.nome}).select().single();
+  if(venda&&I.length>0){
+    await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
+  }
+  for(const i of I){await sb.from('produtos').select('estoque').eq('id',i.prod_id).single().then(({data:p})=>{if(p)sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);});}
+  await sb.from('mesa_itens').delete().eq('mesa_id',id);
+  await sb.from('mesas').update({status:'livre',aberta_em:null}).eq('id',id);
+  closeModal();renderMesas();
+}
+
+async function cancelarMesa(id){
+  await sb.from('mesa_itens').delete().eq('mesa_id',id);
+  await sb.from('mesas').update({status:'livre',aberta_em:null}).eq('id',id);
+  closeModal();renderMesas();
+}
+
+// ── BALCÃO ──
+async function renderBalcao(){
+  const {data:prods}=await sb.from('produtos').select('*').order('nome');
+  const P=prods||[];
+  const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
+  document.getElementById('tab-content').innerHTML=`
+  <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;">
+    <div>
+      <div class="section-hdr"><div class="section-title">Produtos</div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;">
+        ${P.map(p=>`
+        <div class="prod-card" onclick="addBalcao(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.preco},'${p.emoji}')">
+          <div style="font-size:26px">${p.emoji}</div>
+          <div style="font-size:13px;font-weight:600">${p.nome}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:14px;font-weight:700;color:var(--gold2)">${fmt(p.preco)}</span>
+            <span class="badge ${p.estoque<20?'badge-red':'badge-green'}" style="font-size:10px">${p.estoque}</span>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>
+    <div style="position:sticky;top:70px;">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;">
+        <div style="font-size:15px;font-weight:600;margin-bottom:14px">🛒 Carrinho</div>
+        ${balcaoItens.length===0?`<div class="empty"><div class="empty-icon">🛒</div><p>Vazio</p></div>`:`
+        <div style="max-height:260px;overflow-y:auto;margin-bottom:12px;">
+          ${balcaoItens.map((item,idx)=>`
+          <div class="item-row">
+            <div><div class="item-name" style="font-size:13px">${item.nome}</div><div class="item-meta">${fmt(item.preco*item.qty)}</div></div>
+            <div class="qty-ctrl">
+              <button class="qty-btn" onclick="qtyBalcao(${idx},-1)">−</button>
+              <span class="qty-num">${item.qty}</span>
+              <button class="qty-btn" onclick="qtyBalcao(${idx},1)">+</button>
+            </div>
+          </div>`).join('')}
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;">
+            <span>Total</span><span style="color:var(--gold2)">${fmt(total)}</span>
+          </div>
+        </div>
+        <div class="pay-methods">
+          <button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button>
+          <button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button>
+          <button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button>
+          <button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button>
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="finalizarBalcao()">✓ Finalizar</button>
+        <button class="btn btn-secondary" style="width:100%;margin-top:6px" onclick="balcaoItens=[];renderBalcao()">Limpar</button>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function addBalcao(pid,nome,preco,emoji){
+  const exist=balcaoItens.find(i=>i.prodId===pid);
+  if(exist)exist.qty++;
+  else balcaoItens.push({prodId:pid,nome:emoji+' '+nome,preco,qty:1});
+  renderBalcao();
+}
+function qtyBalcao(idx,d){
+  balcaoItens[idx].qty+=d;
+  if(balcaoItens[idx].qty<=0)balcaoItens.splice(idx,1);
+  renderBalcao();
+}
+async function finalizarBalcao(){
+  if(!balcaoItens.length)return;
+  const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
+  const {data:venda}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
+  if(venda){
+    await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
+    for(const i of balcaoItens){
+      const {data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();
+      if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);
+    }
+  }
+  balcaoItens=[];
+  goTab('dashboard');
+}
+
+// ── ESTOQUE ──
+async function renderEstoque(){
+  const [{data:prods},{data:entradas}]=await Promise.all([
+    sb.from('produtos').select('*').order('nome'),
+    sb.from('entradas').select('*').order('criado_em',{ascending:false}).limit(30)
+  ]);
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr">
+    <div class="section-title">Controle de Estoque</div>
+    <button class="btn btn-primary btn-sm" onclick="abrirEntrada()">+ Entrada</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Produto</th><th>Categoria</th><th>Estoque</th><th>Status</th></tr></thead>
+      <tbody>
+        ${(prods||[]).map(p=>`<tr>
+          <td>${p.emoji} ${p.nome}</td>
+          <td><span class="badge badge-blue">${p.cat}</span></td>
+          <td style="font-weight:600">${p.estoque}</td>
+          <td><span class="badge ${p.estoque===0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}">${p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK'}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>
+  <div class="section-hdr"><div class="section-title">Histórico de Entradas</div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Custo</th><th>Operador</th></tr></thead>
+      <tbody>
+        ${(entradas||[]).map(e=>`<tr>
+          <td>${fmtDateFull(e.criado_em)}</td><td>${e.produto}</td>
+          <td style="font-weight:600">${e.qty}</td>
+          <td style="color:var(--red)">${fmt(e.custo)}</td>
+          <td>${e.operador}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function abrirEntrada(){
+  const {data:prods}=await sb.from('produtos').select('*').order('nome');
+  openModal(`
+  <h3>📦 Entrada de Estoque</h3>
+  <div class="modal-field"><label>Produto</label>
+    <select id="ent-prod">${(prods||[]).map(p=>`<option value="${p.id}">${p.emoji} ${p.nome}</option>`).join('')}</select>
+  </div>
+  <div class="modal-field"><label>Quantidade</label><input type="number" id="ent-qty" value="12" min="1"></div>
+  <div class="modal-field"><label>Custo Total (R$)</label><input type="number" id="ent-custo" value="0" step="0.01"></div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="confirmarEntrada()">Registrar</button>
+  </div>`);
+}
+
+async function confirmarEntrada(){
+  const pid=parseInt(document.getElementById('ent-prod').value);
+  const qty=parseInt(document.getElementById('ent-qty').value)||0;
+  const custo=parseFloat(document.getElementById('ent-custo').value)||0;
+  const {data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();
+  await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);
+  await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome});
+  closeModal();renderEstoque();
+}
+
+// ── PRODUTOS ──
+async function renderProdutos(){
+  const {data:prods}=await sb.from('produtos').select('*').order('nome');
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr">
+    <div class="section-title">Produtos</div>
+    <button class="btn btn-primary btn-sm" onclick="pedirSenhaAdm('Adicionar produto',abrirNovoProduto)">+ Novo</button>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
+    ${(prods||[]).map(p=>`
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:32px">${p.emoji}</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:600">${p.nome}</div>
+        <div><span class="badge badge-blue" style="font-size:10px">${p.cat}</span></div>
+        <div style="font-size:13px;color:var(--gold2);font-weight:700;margin-top:4px">${fmt(p.preco)}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:12px;color:${p.estoque<20?'var(--red)':'var(--text2)'}">${p.estoque} un</div>
+        <button class="btn btn-danger btn-sm" style="margin-top:6px" onclick="pedirSenhaAdm('Remover produto',()=>removerProduto(${p.id}))">✕</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+async function abrirNovoProduto(){
+  openModal(`
+  <h3>🏷️ Novo Produto</h3>
+  <div class="modal-field"><label>Nome</label><input type="text" id="np-nome" placeholder="Nome do produto"></div>
+  <div class="modal-field"><label>Categoria</label>
+    <select id="np-cat"><option>Cerveja</option><option>Refrigerante</option><option>Água</option><option>Destilado</option><option>Energético</option><option>Suco</option><option>Outro</option></select>
+  </div>
+  <div class="modal-field"><label>Emoji</label><input type="text" id="np-emoji" value="🍺" maxlength="2"></div>
+  <div class="modal-field"><label>Preço (R$)</label><input type="number" id="np-preco" value="0" step="0.01"></div>
+  <div class="modal-field"><label>Custo (R$)</label><input type="number" id="np-custo" value="0" step="0.01"></div>
+  <div class="modal-field"><label>Estoque Inicial</label><input type="number" id="np-estoque" value="0"></div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="salvarProduto()">Salvar</button>
+  </div>`);
+}
+
+async function salvarProduto(){
+  const nome=document.getElementById('np-nome').value.trim();
+  if(!nome)return;
+  await sb.from('produtos').insert({
+    nome,cat:document.getElementById('np-cat').value,
+    emoji:document.getElementById('np-emoji').value||'📦',
+    preco:parseFloat(document.getElementById('np-preco').value)||0,
+    custo:parseFloat(document.getElementById('np-custo').value)||0,
+    estoque:parseInt(document.getElementById('np-estoque').value)||0
+  });
+  closeModal();renderProdutos();
+}
+
+async function removerProduto(id){
+  await sb.from('produtos').delete().eq('id',id);
+  renderProdutos();
+}
+
+// ── RELATÓRIOS ──
+async function renderRelatorios(){
+  const [{data:vendas},{data:vitens},{data:prods}]=await Promise.all([
+    sb.from('vendas').select('*').order('criado_em',{ascending:false}),
+    sb.from('venda_itens').select('*'),
+    sb.from('produtos').select('*')
+  ]);
+  const V=vendas||[];const VI=vitens||[];const P=prods||[];
+  const totalV=V.reduce((s,v)=>s+Number(v.total),0);
+  const porPag={};V.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  const porProd={};VI.forEach(i=>{porProd[i.nome]=(porProd[i.nome]||0)+i.qty;});
+  const ranking=Object.entries(porProd).sort((a,b)=>b[1]-a[1]);
+  const totalCusto=VI.reduce((s,i)=>{
+    const nome=i.nome.replace(/^[^ ]+ /,'');
+    const p=P.find(x=>i.nome.includes(x.nome));
+    return s+(p?Number(p.custo)*i.qty:0);
+  },0);
+  const lucro=totalV-totalCusto;
+
+  document.getElementById('tab-content').innerHTML=`
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalV)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Custo</div><div class="stat-value">${fmt(totalCusto)}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Lucro</div><div class="stat-value">${fmt(lucro)}</div><div class="stat-sub">${totalV>0?((lucro/totalV)*100).toFixed(1):0}% margem</div></div>
+    <div class="stat-card stat-blue"><div class="stat-label">Transações</div><div class="stat-value">${V.length}</div><div class="stat-sub">ticket médio ${fmt(totalV/Math.max(1,V.length))}</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="table-wrap"><table>
+      <thead><tr><th colspan="2">Por Pagamento</th></tr></thead>
+      <tbody>${Object.entries(porPag).map(([k,v])=>`<tr><td><span class="badge badge-blue">${k.toUpperCase()}</span></td><td style="font-weight:600;color:var(--gold2)">${fmt(v)}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Produto</th><th>Qtd</th></tr></thead>
+      <tbody>${ranking.slice(0,8).map(([n,q],i)=>`<tr><td>${n}</td><td><span class="badge ${i===0?'badge-gold':i<3?'badge-green':'badge-blue'}">${q}</span></td></tr>`).join('')}</tbody>
+    </table></div>
+  </div>
+  <div style="margin-top:16px;" class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
+    <tbody>${V.slice(0,20).map(v=>`<tr>
+      <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
+      <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
+      <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
+      <td>${v.operador}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+// ── IA ──
+async function renderIA(){
+  const [{data:prods},{data:vitens}]=await Promise.all([
+    sb.from('produtos').select('*').order('estoque'),
+    sb.from('venda_itens').select('*')
+  ]);
+  const P=prods||[];const VI=vitens||[];
+  const porProd={};VI.forEach(i=>{
+    const p=P.find(x=>i.nome.includes(x.nome));
+    if(p)porProd[p.id]=(porProd[p.id]||0)+i.qty;
+  });
+  const semVenda=P.filter(p=>!porProd[p.id]);
+  const maisVendidos=P.filter(p=>porProd[p.id]).sort((a,b)=>(porProd[b.id]||0)-(porProd[a.id]||0)).slice(0,4);
+  const zerados=P.filter(p=>p.estoque===0);
+  const baixos=P.filter(p=>p.estoque>0&&p.estoque<20);
+  const campanhas=[
+    {t:'🍺 Happy Hour',d:`Produtos com menos saída ganham 20% OFF entre 17h e 19h. Sugestão: ${semVenda[0]?semVenda[0].nome:'produtos parados'}.`,c:'var(--goldl)',b:'rgba(212,160,23,0.3)',tc:'var(--gold3)'},
+    {t:'📦 Combo Estratégico',d:`Combine o mais vendido com o que está parado. Ex: ${maisVendidos[0]?maisVendidos[0].nome:'top'} + ${semVenda[0]?semVenda[0].nome:'parado'} por preço especial.`,c:'var(--bluel)',b:'rgba(41,128,185,0.3)',tc:'var(--blue)'},
+    {t:'🎯 Desafio da Mesa',d:'A mesa que mais consumir até as 22h ganha uma rodada grátis. Aumenta ticket médio.',c:'var(--greenl)',b:'rgba(39,174,96,0.3)',tc:'var(--green)'},
+    {t:'📱 PIX = Desconto',d:'Clientes que pagarem no PIX ganham R$5 off acima de R$50. Reduz taxa de cartão.',c:'var(--purplel)',b:'rgba(125,60,152,0.3)',tc:'#b06ed4'},
+  ];
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><div class="section-title">🤖 Inteligência de Vendas</div></div></div>
+  ${zerados.length?`<div class="alert alert-danger">🚨 Zerados: ${zerados.map(p=>p.nome).join(', ')}</div>`:''}
+  ${baixos.length?`<div class="alert alert-warn">⚠️ Estoque baixo: ${baixos.map(p=>p.nome+' ('+p.estoque+')').join(', ')}</div>`:''}
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+    <div>
+      <div class="section-hdr"><div class="section-title">📈 Mais Vendidos</div></div>
+      ${maisVendidos.map((p,i)=>`<div class="ia-card" style="padding:12px 14px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:20px">${p.emoji}</span>
+            <div><div style="font-size:13px;font-weight:600">${p.nome}</div><div style="font-size:11px;color:var(--text2)">${p.cat}</div></div>
+          </div>
+          <span class="badge ${i===0?'badge-gold':i===1?'badge-green':'badge-blue'}">${porProd[p.id]||0} vendas</span>
+        </div>
+      </div>`).join('')}
+    </div>
+    <div>
+      <div class="section-hdr"><div class="section-title">📉 Sem Saída</div></div>
+      ${semVenda.slice(0,4).map(p=>`<div class="ia-card" style="padding:12px 14px;margin-bottom:8px;border-color:rgba(192,57,43,0.2);">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:20px">${p.emoji}</span>
+            <div><div style="font-size:13px;font-weight:600">${p.nome}</div><div style="font-size:11px;color:var(--text2)">${fmt(p.preco)}</div></div>
+          </div>
+          <span class="badge badge-red">0 vendas</span>
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>
+  <div class="section-hdr"><div class="section-title">💡 Campanhas Sugeridas</div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;">
+    ${campanhas.map(c=>`<div style="background:${c.c};border:1px solid ${c.b};border-radius:var(--radius);padding:16px;">
+      <div style="font-size:14px;font-weight:700;color:${c.tc};margin-bottom:8px">${c.t}</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.6">${c.d}</div>
+    </div>`).join('')}
+  </div>`;
+}
+</script>
+</body>
+</html>
