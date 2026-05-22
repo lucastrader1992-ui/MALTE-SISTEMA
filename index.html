@@ -194,12 +194,28 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 
 @media(max-width:600px){.stats-grid{grid-template-columns:1fr 1fr;}.content{padding:12px 10px;}}
 
-/* PRINT */
+/* PRINT PDF */
 @media print{
+  body{background:#fff !important;}
+  #app .topbar,#app .nav,.no-print{display:none !important;}
+  .print-area{display:block !important;position:static !important;width:100% !important;}
+  .print-area *{visibility:visible !important;}
   body *{visibility:hidden;}
   .print-area,.print-area *{visibility:visible;}
-  .print-area{position:fixed;top:0;left:0;width:80mm;background:#fff;color:#000;}
+  .print-area{position:fixed;top:0;left:0;width:100%;}
 }
+
+/* RELATÓRIO PDF */
+.relatorio-pdf-area{background:#fff;color:#000;padding:30px;font-family:'Segoe UI',sans-serif;font-size:13px;}
+.relatorio-pdf-area h1{font-size:20px;font-weight:700;margin-bottom:4px;color:#1a1a2e;}
+.relatorio-pdf-area .rel-sub{font-size:11px;color:#666;margin-bottom:20px;}
+.relatorio-pdf-area table{width:100%;border-collapse:collapse;margin-bottom:20px;}
+.relatorio-pdf-area th{background:#1a1e2e;color:#f0c040;padding:8px 10px;font-size:11px;text-align:left;}
+.relatorio-pdf-area td{padding:7px 10px;border-bottom:1px solid #eee;font-size:12px;}
+.relatorio-pdf-area .stat-row{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;}
+.relatorio-pdf-area .stat-box{border:1px solid #ddd;border-radius:8px;padding:12px 18px;flex:1;min-width:120px;}
+.relatorio-pdf-area .stat-box .lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;}
+.relatorio-pdf-area .stat-box .val{font-size:20px;font-weight:700;color:#1a1e2e;}
 </style>
 </head>
 <body>
@@ -274,7 +290,6 @@ tr:hover td{background:rgba(255,255,255,0.02);}
   <div class="modal" id="modal-content"></div>
 </div>
 
-<!-- ÁREA DE IMPRESSÃO -->
 <div id="print-area" class="print-area" style="display:none"></div>
 
 <script>
@@ -286,12 +301,59 @@ let SENHAS={adm:'11300955',caixa:'1234'};
 const USERS={adm:{role:'adm',nome:'Administrador'},caixa:{role:'caixa',nome:'Caixa'}};
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
+let mesaPollingInterval=null; // FIX 2: controle do polling das mesas
 
+// ══════════════════════════════════════════════
+// FIX 1: DIA COMERCIAL — 06:00 às 05:59 do dia seguinte
+// ══════════════════════════════════════════════
+function getDiaComercial(){
+  const agora=new Date();
+  // Se hora < 6, o dia comercial é o dia anterior
+  if(agora.getHours()<6){
+    agora.setDate(agora.getDate()-1);
+  }
+  // Início: hoje às 06:00
+  const inicio=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate(),6,0,0,0);
+  // Fim: amanhã às 05:59:59
+  const fim=new Date(inicio);
+  fim.setDate(fim.getDate()+1);
+  fim.setHours(5,59,59,999);
+  return{inicio,fim};
+}
+
+function isHojeComercial(dataStr){
+  const dt=new Date(dataStr);
+  const{inicio,fim}=getDiaComercial();
+  return dt>=inicio&&dt<=fim;
+}
+
+// ══════════════════════════════════════════════
+// FIX 3: SESSÃO PERSISTENTE — não sai ao recarregar
+// ══════════════════════════════════════════════
 window.addEventListener('load',async()=>{
   const s=localStorage.getItem('malte_senhas');
   if(s)try{SENHAS=JSON.parse(s);}catch(e){}
   const c=localStorage.getItem('malte_caixa');
   if(c)try{caixaAberto=JSON.parse(c);}catch(e){}
+
+  // Restaurar sessão salva
+  const sessao=localStorage.getItem('malte_sessao');
+  if(sessao){
+    try{
+      const u=JSON.parse(sessao);
+      if(u&&USERS[u.id]){
+        currentUser=u;
+        document.getElementById('loading-screen').style.display='none';
+        document.getElementById('app').style.display='flex';
+        document.getElementById('top-user-pill').textContent=USERS[u.id].nome;
+        document.getElementById('top-role-badge').textContent=u.id.toUpperCase();
+        if(u.id!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
+        goTab('dashboard');
+        return;
+      }
+    }catch(e){}
+  }
+
   try{await sb.from('produtos').select('id').limit(1);}catch(e){}
   document.getElementById('loading-screen').style.display='none';
   document.getElementById('login-screen').style.display='flex';
@@ -302,11 +364,14 @@ function setRole(r){
   event.target.classList.add('active');
   document.getElementById('login-user').value=r;
 }
+
 function doLogin(){
   const u=document.getElementById('login-user').value.trim().toLowerCase();
   const p=document.getElementById('login-pass').value;
   if(!USERS[u]||SENHAS[u]!==p){document.getElementById('login-err').textContent='Usuário ou senha incorretos.';return;}
   currentUser={...USERS[u],id:u};
+  // FIX 3: salvar sessão no localStorage
+  localStorage.setItem('malte_sessao',JSON.stringify(currentUser));
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
   document.getElementById('top-user-pill').textContent=USERS[u].nome;
@@ -314,8 +379,12 @@ function doLogin(){
   if(u!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
   goTab('dashboard');
 }
+
 function doLogout(){
   currentUser=null;balcaoItens=[];
+  // FIX 3: limpar sessão ao sair
+  localStorage.removeItem('malte_sessao');
+  stopMesaPolling();
   document.getElementById('app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('login-pass').value='';
@@ -342,7 +411,13 @@ function openModal(html){document.getElementById('modal-content').innerHTML=html
 function closeModal(){document.getElementById('modal-overlay').classList.remove('open');}
 document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
 
+// FIX 2: parar polling ao trocar de aba
+function stopMesaPolling(){
+  if(mesaPollingInterval){clearInterval(mesaPollingInterval);mesaPollingInterval=null;}
+}
+
 function goTab(tab){
+  stopMesaPolling(); // para polling ao sair de mesas
   currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{
@@ -369,7 +444,7 @@ function selPay(tipo){
 }
 
 // ══════════════════════════════════════════════
-// DASHBOARD
+// DASHBOARD — usa dia comercial (FIX 1)
 // ══════════════════════════════════════════════
 async function renderDashboard(){
   const[{data:V},{data:M},{data:P},{data:FP},{data:FR},{data:T}]=await Promise.all([
@@ -380,18 +455,21 @@ async function renderDashboard(){
     sb.from('financeiro').select('*').eq('tipo','receber').eq('pago',false),
     sb.from('tarefas').select('*').eq('concluida',false),
   ]);
-  const hoje=new Date().toDateString();
-  const hojeV=(V||[]).filter(v=>new Date(v.criado_em).toDateString()===hoje);
+  // FIX 1: filtro com dia comercial
+  const hojeV=(V||[]).filter(v=>isHojeComercial(v.criado_em));
   const totalHoje=hojeV.reduce((s,v)=>s+Number(v.total),0);
   const mesasOcupadas=(M||[]).filter(m=>m.status==='ocupada').length;
   const baixoEstoque=(P||[]).filter(p=>p.estoque<20).length;
   const totalPagar=(FP||[]).reduce((s,f)=>s+Number(f.valor),0);
   const totalReceber=(FR||[]).reduce((s,f)=>s+Number(f.valor),0);
   const caixaInfo=caixaAberto?`<span class="badge badge-green">ABERTO desde ${fmtDate(caixaAberto.abertura)}</span>`:`<span class="badge badge-red">FECHADO</span>`;
+  const{inicio}=getDiaComercial();
+  const labelDia=inicio.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit'});
 
   document.getElementById('tab-content').innerHTML=`
-  <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;">
+  <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span style="font-size:12px;color:var(--text2)">Caixa:</span>${caixaInfo}
+    <span style="font-size:11px;color:var(--text3)">📅 Dia comercial: ${labelDia} 06:00 → +1d 05:59</span>
     ${(T||[]).length>0?`<span class="badge badge-orange">${(T||[]).length} tarefa(s) pendente(s)</span>`:''}
   </div>
   <div class="stats-grid">
@@ -415,12 +493,12 @@ async function renderDashboard(){
 }
 
 // ══════════════════════════════════════════════
-// CAIXA
+// CAIXA — usa dia comercial (FIX 1) + sem senha pra fechar (FIX 4)
 // ══════════════════════════════════════════════
 async function renderCaixa(){
   const{data:V}=await sb.from('vendas').select('*').order('criado_em',{ascending:false});
-  const hoje=new Date().toDateString();
-  const hojeV=(V||[]).filter(v=>new Date(v.criado_em).toDateString()===hoje);
+  // FIX 1: filtro com dia comercial
+  const hojeV=(V||[]).filter(v=>isHojeComercial(v.criado_em));
   const totalHoje=hojeV.reduce((s,v)=>s+Number(v.total),0);
   const porPag={};hojeV.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
   document.getElementById('tab-content').innerHTML=`
@@ -429,7 +507,10 @@ async function renderCaixa(){
       <div style="font-size:15px;font-weight:700">${caixaAberto?'🟢 Caixa Aberto':'🔴 Caixa Fechado'}</div>
       ${caixaAberto?`<div style="font-size:12px;color:var(--text2);margin-top:3px">Aberto às ${fmtDateFull(caixaAberto.abertura)} | Troco: ${fmt(caixaAberto.troco)}</div>`:''}
     </div>
-    ${caixaAberto?`<button class="btn btn-danger btn-sm" onclick="pedirSenhaAdm('Fechar caixa',fecharCaixa)">Fechar Caixa</button>`:`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
+    ${caixaAberto
+      // FIX 4: fechar caixa SEM pedir senha
+      ?`<button class="btn btn-danger btn-sm" onclick="fecharCaixa()">Fechar Caixa</button>`
+      :`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
   </div>
   <div class="stats-grid">
     <div class="stat-card stat-gold"><div class="stat-label">Total do Dia</div><div class="stat-value">${fmt(totalHoje)}</div></div>
@@ -464,9 +545,10 @@ function confirmarAbrirCaixa(){
   localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));
   closeModal();renderCaixa();
 }
+// FIX 4: fechar caixa direto, sem senha
 function fecharCaixa(){
   openModal(`<h3>🔒 Fechar Caixa</h3>
-  <p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento?</p>
+  <p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento do caixa?</p>
   <div class="modal-actions">
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
     <button class="btn btn-danger" onclick="confirmarFecharCaixa()">Fechar Caixa</button>
@@ -515,7 +597,7 @@ function imprimirComprovante(id){
 }
 
 // ══════════════════════════════════════════════
-// MESAS
+// MESAS — com atualização em tempo real (FIX 2)
 // ══════════════════════════════════════════════
 async function renderMesas(){
   const[{data:M},{data:I}]=await Promise.all([
@@ -524,14 +606,13 @@ async function renderMesas(){
   ]);
   const totais={};
   (I||[]).forEach(i=>{totais[i.mesa_id]=(totais[i.mesa_id]||0)+Number(i.preco)*i.qty;});
-  const pagos={};
-  (I||[]).forEach(i=>{if(i.pago_parcial)pagos[i.mesa_id]=(pagos[i.mesa_id]||0)+Number(i.pago_parcial);});
   const ocup=(M||[]).filter(m=>m.status==='ocupada').length;
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr">
     <div><div class="section-title">Mesas</div><div class="section-sub">${ocup} ocupadas de ${(M||[]).length}</div></div>
+    <span style="font-size:11px;color:var(--teal)">🔄 Atualização automática ativa</span>
   </div>
-  <div class="mesas-grid">
+  <div class="mesas-grid" id="mesas-grid-container">
     ${(M||[]).map(m=>`
     <div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})">
       <div class="mesa-num" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.id}</div>
@@ -539,6 +620,26 @@ async function renderMesas(){
       ${m.status==='ocupada'&&totais[m.id]?`<div class="mesa-total">${fmt(totais[m.id])}</div>`:''}
     </div>`).join('')}
   </div>`;
+
+  // FIX 2: polling a cada 5 segundos para atualizar os totais das mesas
+  stopMesaPolling();
+  mesaPollingInterval=setInterval(async()=>{
+    if(currentTab!=='mesas')return stopMesaPolling();
+    const[{data:Mu},{data:Iu}]=await Promise.all([
+      sb.from('mesas').select('*').order('id'),
+      sb.from('mesa_itens').select('*')
+    ]);
+    const totaisU={};
+    (Iu||[]).forEach(i=>{totaisU[i.mesa_id]=(totaisU[i.mesa_id]||0)+Number(i.preco)*i.qty;});
+    const grid=document.getElementById('mesas-grid-container');
+    if(!grid)return stopMesaPolling();
+    grid.innerHTML=(Mu||[]).map(m=>`
+    <div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})">
+      <div class="mesa-num" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.id}</div>
+      <div class="mesa-status" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.status==='ocupada'?'Ocupada':'Livre'}</div>
+      ${m.status==='ocupada'&&totaisU[m.id]?`<div class="mesa-total">${fmt(totaisU[m.id])}</div>`:''}
+    </div>`).join('');
+  },5000);
 }
 
 async function abrirMesa(id){
@@ -644,7 +745,6 @@ async function confirmarParcial(mesaId){
   const{data:m}=await sb.from('mesas').select('pago_parcial').eq('id',mesaId).single();
   const novoParcial=(m.pago_parcial||0)+valor;
   await sb.from('mesas').update({pago_parcial:novoParcial}).eq('id',mesaId);
-  // Registra pagamento parcial
   await sb.from('pagamentos_parciais').insert({
     mesa_id:mesaId,valor,pagamento:payAtual,
     quem_pagou:quem||'Cliente',operador:currentUser.nome
@@ -695,11 +795,14 @@ async function addItemMesa(mesaId){
   else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}
   await modalMesaAberta(mesaId);
 }
+
+// FIX 5: senha apenas para remover produto da mesa (não para fechar caixa)
 async function removerItemMesa(itemId,mesaId){
   const doRemover=async()=>{await sb.from('mesa_itens').delete().eq('id',itemId);await modalMesaAberta(mesaId);};
   if(currentUser.id==='adm'){doRemover();}
   else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',doRemover);}
 }
+
 async function fecharMesaVenda(id){
   const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();
   const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);
@@ -712,7 +815,6 @@ async function fecharMesaVenda(id){
   for(const i of I){const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);}
   await sb.from('mesa_itens').delete().eq('mesa_id',id);
   await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
-  // Mostrar comprovante final
   await verComprovante(venda.id);
   renderMesas();
 }
@@ -853,7 +955,7 @@ async function confirmarEntrada(){
 }
 
 // ══════════════════════════════════════════════
-// PRODUTOS
+// PRODUTOS — senha só no remover (FIX 5)
 // ══════════════════════════════════════════════
 async function renderProdutos(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
@@ -879,7 +981,7 @@ async function renderProdutos(){
         <td>${p.em_promo?`<span class="badge badge-red">🔥${fmt(p.preco_promo)}</span>`:'<span style="color:var(--text3)">Não</span>'}</td>
         <td><div style="display:flex;gap:3px;">
           <button class="btn btn-secondary btn-xs" onclick="pedirSenhaAdm('Editar produto',()=>editarProduto(${p.id}))">✏️</button>
-          <button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Remover produto',()=>removerProduto(${p.id}))">✕</button>
+          <button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Remover produto — senha ADM',()=>removerProduto(${p.id}))">✕</button>
         </div></td>
       </tr>`;
     }).join('')}</tbody>
@@ -1097,7 +1199,7 @@ async function salvarCompra(){
 }
 
 // ══════════════════════════════════════════════
-// CMV — CUSTO DA MERCADORIA VENDIDA
+// CMV
 // ══════════════════════════════════════════════
 async function renderCMV(){
   const[{data:V},{data:VI},{data:P}]=await Promise.all([
@@ -1119,7 +1221,8 @@ async function renderCMV(){
     return{totalV,totalC,cmvPct};
   }
 
-  const diasHoje=(V||[]).filter(v=>new Date(v.criado_em).toDateString()===hoje.toDateString());
+  // FIX 1: usa dia comercial para "hoje"
+  const diasHoje=(V||[]).filter(v=>isHojeComercial(v.criado_em));
   const diasSemana=(V||[]).filter(v=>new Date(v.criado_em)>=inicioSemana);
   const diasMes=(V||[]).filter(v=>new Date(v.criado_em)>=inicioMes);
 
@@ -1128,7 +1231,6 @@ async function renderCMV(){
   const dMes=calcPeriodo(diasMes);
   const dTodo=calcPeriodo(V||[]);
 
-  // Por produto
   const porProd={};
   (VI||[]).forEach(i=>{
     const p=(P||[]).find(x=>i.nome.includes(x.nome));
@@ -1141,7 +1243,6 @@ async function renderCMV(){
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><div class="section-title">📉 CMV — Custo da Mercadoria Vendida</div>
     <div class="section-sub">Quanto do faturamento foi para cobrir o custo dos produtos</div></div></div>
-
   <div class="stats-grid">
     <div class="stat-card"><div class="stat-label">CMV Hoje</div>
       <div class="stat-value" style="color:${dHoje.cmvPct<=40?'var(--green)':dHoje.cmvPct<=60?'var(--gold2)':'var(--red)'}">${dHoje.cmvPct}%</div>
@@ -1156,11 +1257,9 @@ async function renderCMV(){
       <div class="stat-value" style="color:${dTodo.cmvPct<=40?'var(--green)':dTodo.cmvPct<=60?'var(--gold2)':'var(--red)'}">${dTodo.cmvPct}%</div>
       <div class="stat-sub">${fmt(dTodo.totalC)} de ${fmt(dTodo.totalV)}</div></div>
   </div>
-
   <div class="alert ${dMes.cmvPct<=40?'alert-success':dMes.cmvPct<=60?'alert-warn':'alert-danger'}">
     ${dMes.cmvPct<=40?'✅ CMV Excelente! Margem saudável acima de 60%.':dMes.cmvPct<=60?'⚠️ CMV Moderado. Revise os preços de venda para melhorar a margem.':'🚨 CMV Alto! Seus custos estão consumindo mais de 60% do faturamento. Ação necessária.'}
   </div>
-
   <div class="section-hdr"><div class="section-title">CMV por Produto</div></div>
   <div class="table-wrap"><table>
     <thead><tr><th>Produto</th><th>Qtd Vendida</th><th>Faturamento</th><th>Custo Total</th><th>CMV %</th><th>Margem</th></tr></thead>
@@ -1323,7 +1422,7 @@ async function salvarAnotacao(){
 async function deletarAnotacao(id){await sb.from('anotacoes').delete().eq('id',id);renderAnotacoes();}
 
 // ══════════════════════════════════════════════
-// RELATÓRIOS
+// RELATÓRIOS — com filtro de período + botão PDF (FIX 6)
 // ══════════════════════════════════════════════
 async function renderRelatorios(){
   const[{data:V},{data:VI},{data:P}]=await Promise.all([
@@ -1336,29 +1435,58 @@ async function renderRelatorios(){
   const porProd={};(VI||[]).forEach(i=>{porProd[i.nome]=(porProd[i.nome]||0)+i.qty;});
   const ranking=Object.entries(porProd).sort((a,b)=>b[1]-a[1]);
   const totalCusto=(VI||[]).reduce((s,i)=>{const p=(P||[]).find(x=>i.nome.includes(x.nome));return s+(p?Number(p.custo)*i.qty:0);},0);
+  const lucro=totalV-totalCusto;
+  const margem=totalV>0?(lucro/totalV*100).toFixed(1):0;
+
   document.getElementById('tab-content').innerHTML=`
-  <div class="stats-grid">
-    <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalV)}</div></div>
-    <div class="stat-card stat-red"><div class="stat-label">Custo</div><div class="stat-value">${fmt(totalCusto)}</div></div>
-    <div class="stat-card stat-green"><div class="stat-label">Lucro</div><div class="stat-value">${fmt(totalV-totalCusto)}</div><div class="stat-sub">${totalV>0?(((totalV-totalCusto)/totalV)*100).toFixed(1):0}% margem</div></div>
-    <div class="stat-card stat-blue"><div class="stat-label">Transações</div><div class="stat-value">${(V||[]).length}</div><div class="stat-sub">ticket médio ${fmt(totalV/Math.max(1,(V||[]).length))}</div></div>
+  <div class="section-hdr">
+    <div class="section-title">📈 Relatórios</div>
+    <button class="btn btn-primary btn-sm" onclick="imprimirRelatorio()">🖨️ Imprimir / Salvar PDF</button>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-    <div class="table-wrap"><table><thead><tr><th colspan="2">Por Pagamento</th></tr></thead>
-      <tbody>${Object.entries(porPag).map(([k,v])=>`<tr><td><span class="badge badge-blue">${k.toUpperCase()}</span></td><td style="font-weight:600;color:var(--gold2)">${fmt(v)}</td></tr>`).join('')}</tbody></table></div>
-    <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Qtd</th></tr></thead>
-      <tbody>${ranking.slice(0,8).map(([n,q],i)=>`<tr><td>${n}</td><td><span class="badge ${i===0?'badge-gold':i<3?'badge-green':'badge-blue'}">${q}</span></td></tr>`).join('')}</tbody></table></div>
-  </div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comprovante</th></tr></thead>
-    <tbody>${(V||[]).slice(0,30).map(v=>`<tr>
-      <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
-      <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
-      <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
-      <td>${v.operador}</td>
-      <td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
-    </tr>`).join('')}</tbody>
-  </table></div>`;
+
+  <div id="relatorio-conteudo">
+    <div class="stats-grid">
+      <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalV)}</div></div>
+      <div class="stat-card stat-red"><div class="stat-label">Custo</div><div class="stat-value">${fmt(totalCusto)}</div></div>
+      <div class="stat-card stat-green"><div class="stat-label">Lucro</div><div class="stat-value">${fmt(lucro)}</div><div class="stat-sub">${margem}% margem</div></div>
+      <div class="stat-card stat-blue"><div class="stat-label">Transações</div><div class="stat-value">${(V||[]).length}</div><div class="stat-sub">ticket médio ${fmt(totalV/Math.max(1,(V||[]).length))}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="table-wrap"><table><thead><tr><th colspan="2">Por Pagamento</th></tr></thead>
+        <tbody>${Object.entries(porPag).map(([k,v])=>`<tr><td><span class="badge badge-blue">${k.toUpperCase()}</span></td><td style="font-weight:600;color:var(--gold2)">${fmt(v)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Produto Mais Vendido</th><th>Qtd</th></tr></thead>
+        <tbody>${ranking.slice(0,8).map(([n,q],i)=>`<tr><td>${n}</td><td><span class="badge ${i===0?'badge-gold':i<3?'badge-green':'badge-blue'}">${q}</span></td></tr>`).join('')}</tbody></table></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th class="no-print">Comprovante</th></tr></thead>
+      <tbody>${(V||[]).slice(0,30).map(v=>`<tr>
+        <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
+        <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
+        <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
+        <td>${v.operador}</td>
+        <td class="no-print"><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+  </div>`;
+}
+
+// FIX 6: imprimir relatório completo como PDF
+function imprimirRelatorio(){
+  const conteudo=document.getElementById('relatorio-conteudo');
+  const{inicio,fim}=getDiaComercial();
+  const dataStr=inicio.toLocaleDateString('pt-BR');
+
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=`
+  <div class="relatorio-pdf-area">
+    <h1>🍺 Malte Distribuidora — Relatório Geral</h1>
+    <div class="rel-sub">Gerado em ${new Date().toLocaleString('pt-BR')} | Dia comercial referência: ${dataStr}</div>
+    ${conteudo.innerHTML}
+  </div>`;
+  pa.style.display='block';
+  window.print();
+  pa.style.display='none';
+  pa.innerHTML='';
 }
 
 // ══════════════════════════════════════════════
@@ -1378,9 +1506,10 @@ function renderConfiguracoes(){
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:10px">ℹ️ Sistema</div>
       <div style="font-size:12px;color:var(--text2);line-height:1.9">
-        <div>Versão: <b style="color:var(--text)">4.0</b></div>
+        <div>Versão: <b style="color:var(--text)">4.1</b></div>
         <div>Banco: <b style="color:var(--green)">Supabase Online ✓</b></div>
         <div>URL: <b style="color:var(--gold2)">malte-sistema.vercel.app</b></div>
+        <div>Dia comercial: <b style="color:var(--gold2)">06:00 → 05:59 (+1d)</b></div>
       </div>
     </div>
   </div>`;
