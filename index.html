@@ -1929,28 +1929,179 @@ async function salvarConta(tipo){
 async function pagarConta(id){await sb.from('financeiro').update({pago:true}).eq('id',id);renderFinanceiro();}
 
 async function renderCompras(){
-  const{data:C}=await sb.from('compras').select('*').order('criado_em',{ascending:false});
+  const hoje=new Date().toISOString().split('T')[0];
+  const primMes=new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().split('T')[0];
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div class="section-title">🛍️ Registro de Compras</div>
-    <button class="btn btn-primary btn-sm" onclick="novaCompra()">+ Nova Compra</button>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <button class="btn btn-teal btn-sm" onclick="imprimirCompras()">🖨️ PDF</button>
+      <button class="btn btn-primary btn-sm" onclick="novaCompra()">+ Nova Compra</button>
+    </div>
   </div>
+
+  <!-- FILTROS -->
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:12px;font-weight:600;color:var(--gold2)">🔍 Filtrar:</span>
+    <input type="date" id="cmp-filtro-ini" value="${primMes}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+    <span style="color:var(--text2);font-size:12px">até</span>
+    <input type="date" id="cmp-filtro-fim" value="${hoje}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+    <select id="cmp-filtro-status" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+      <option value="">Todos os status</option>
+      <option value="pendente">⏳ Pendente</option>
+      <option value="recebido">✅ Recebido</option>
+      <option value="cancelado">❌ Cancelado</option>
+    </select>
+    <button class="btn btn-primary btn-sm" onclick="carregarCompras()">🔍 Filtrar</button>
+    <button class="btn btn-secondary btn-sm" onclick="
+      document.getElementById('cmp-filtro-ini').value='2020-01-01';
+      document.getElementById('cmp-filtro-fim').value='${hoje}';
+      document.getElementById('cmp-filtro-status').value='';
+      carregarCompras()">📋 Tudo</button>
+    <button class="btn btn-secondary btn-sm" onclick="
+      document.getElementById('cmp-filtro-ini').value='${hoje}';
+      document.getElementById('cmp-filtro-fim').value='${hoje}';
+      carregarCompras()">📌 Hoje</button>
+  </div>
+
+  <div id="compras-conteudo">
+    <div class="empty"><div class="spinner" style="margin:0 auto"></div></div>
+  </div>`;
+  await carregarCompras();
+}
+
+async function carregarCompras(){
+  const ini=document.getElementById('cmp-filtro-ini')?.value||'2020-01-01';
+  const fim=document.getElementById('cmp-filtro-fim')?.value||new Date().toISOString().split('T')[0];
+  const status=document.getElementById('cmp-filtro-status')?.value||'';
+  const tsIni=new Date(`${ini}T00:00:00`).toISOString();
+  const tsFim=new Date(`${fim}T23:59:59`).toISOString();
+
+  let query=sb.from('compras').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false});
+  if(status) query=query.eq('status',status);
+  const{data:C}=await query;
+
+  const compras=C||[];
+  const totalGasto=compras.filter(c=>c.status==='recebido').reduce((s,c)=>s+Number(c.valor_total),0);
+  const totalPendente=compras.filter(c=>c.status==='pendente').reduce((s,c)=>s+Number(c.valor_total),0);
+  const wrap=document.getElementById('compras-conteudo');
+  if(!wrap)return;
+
+  wrap.innerHTML=`
+  <!-- RESUMO -->
+  <div class="stats-grid" style="margin-bottom:14px;">
+    <div class="stat-card stat-red"><div class="stat-label">Total Comprado (Recebido)</div><div class="stat-value">${fmt(totalGasto)}</div><div class="stat-sub">${compras.filter(c=>c.status==='recebido').length} compras</div></div>
+    <div class="stat-card"><div class="stat-label">Pendente</div><div class="stat-value" style="color:var(--gold2)">${fmt(totalPendente)}</div><div class="stat-sub">${compras.filter(c=>c.status==='pendente').length} compras</div></div>
+    <div class="stat-card stat-blue"><div class="stat-label">Total no Período</div><div class="stat-value">${compras.length}</div><div class="stat-sub">compras registradas</div></div>
+  </div>
+
   <div class="table-wrap"><table>
     <thead><tr><th>Data</th><th>Fornecedor</th><th>Produto</th><th>Qtd</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
-    <tbody>${(C||[]).length===0?`<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Nenhuma compra</td></tr>`:
-    (C||[]).map(c=>`<tr>
-      <td>${fmtDateFull(c.criado_em)}</td><td>${c.fornecedor}</td><td>${c.produto}</td><td>${c.qty}</td>
-      <td style="font-weight:600;color:var(--red)">${fmt(c.valor_total)}</td>
-      <td>
-        <select onchange="alterarStatusCompra(${c.id},this.value,'${c.status}',${c.qty},'${c.produto}',${c.custo_unit||0})"
-          style="padding:4px 7px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:${c.status==='recebido'?'var(--green)':c.status==='pendente'?'var(--gold2)':'var(--red)'};font-size:11px;font-weight:600;cursor:pointer;">
-          <option value="pendente" ${c.status==='pendente'?'selected':''}>⏳ PENDENTE</option>
-          <option value="recebido" ${c.status==='recebido'?'selected':''}>✅ RECEBIDO</option>
-          <option value="cancelado" ${c.status==='cancelado'?'selected':''}>❌ CANCELADO</option>
-        </select>
-      </td>
-      <td><button class="btn btn-secondary btn-xs" onclick="editarCompra(${c.id})">✏️</button></td>
-    </tr>`).join('')}</tbody>
+    <tbody>${compras.length===0
+      ?`<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Nenhuma compra no período selecionado</td></tr>`
+      :compras.map(c=>`<tr>
+        <td style="font-size:11px">${fmtDateFull(c.criado_em)}</td>
+        <td>${c.fornecedor}</td><td>${c.produto}</td><td>${c.qty}</td>
+        <td style="font-weight:600;color:var(--red)">${fmt(c.valor_total)}</td>
+        <td>
+          <select onchange="alterarStatusCompra(${c.id},this.value,'${c.status}',${c.qty},'${c.produto}',${c.custo_unit||0})"
+            style="padding:4px 7px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:${c.status==='recebido'?'var(--green)':c.status==='pendente'?'var(--gold2)':'var(--red)'};font-size:11px;font-weight:600;cursor:pointer;">
+            <option value="pendente" ${c.status==='pendente'?'selected':''}>⏳ PENDENTE</option>
+            <option value="recebido" ${c.status==='recebido'?'selected':''}>✅ RECEBIDO</option>
+            <option value="cancelado" ${c.status==='cancelado'?'selected':''}>❌ CANCELADO</option>
+          </select>
+        </td>
+        <td><button class="btn btn-secondary btn-xs" onclick="editarCompra(${c.id})">✏️</button></td>
+      </tr>`).join('')}
+    </tbody>
   </table></div>`;
+}
+
+async function imprimirCompras(){
+  const ini=document.getElementById('cmp-filtro-ini')?.value||'2020-01-01';
+  const fim=document.getElementById('cmp-filtro-fim')?.value||new Date().toISOString().split('T')[0];
+  const status=document.getElementById('cmp-filtro-status')?.value||'';
+  const tsIni=new Date(`${ini}T00:00:00`).toISOString();
+  const tsFim=new Date(`${fim}T23:59:59`).toISOString();
+  let query=sb.from('compras').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false});
+  if(status) query=query.eq('status',status);
+  const{data:C}=await query;
+  const compras=C||[];
+  const totalGasto=compras.filter(c=>c.status==='recebido').reduce((s,c)=>s+Number(c.valor_total),0);
+  const totalPend=compras.filter(c=>c.status==='pendente').reduce((s,c)=>s+Number(c.valor_total),0);
+  const agora=new Date().toLocaleString('pt-BR');
+  const labelStatus=status?{pendente:'⏳ Pendente',recebido:'✅ Recebido',cancelado:'❌ Cancelado'}[status]:'Todos';
+
+  const html=`
+  <div style="background:#fff;color:#000;padding:28px;font-family:'Segoe UI',sans-serif;font-size:12px;">
+    <div style="display:flex;justify-content:space-between;border-bottom:2px solid #1a1e2e;padding-bottom:12px;margin-bottom:16px;">
+      <div>
+        <div style="font-size:20px;font-weight:700;color:#1a1e2e">🍺 Malte Distribuidora</div>
+        <div style="font-size:12px;color:#666">Relatório de Compras</div>
+        <div style="font-size:11px;color:#888;margin-top:3px">Período: ${ini} a ${fim} | Status: ${labelStatus}</div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#888">
+        <div>Gerado: ${agora}</div>
+        <div style="margin-top:4px">Total comprado: <b style="color:#c62828">R$ ${totalGasto.toFixed(2).replace('.',',')}</b></div>
+        <div>Pendente: <b style="color:#f57f17">R$ ${totalPend.toFixed(2).replace('.',',')}</b></div>
+      </div>
+    </div>
+
+    <!-- RESUMO -->
+    <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:120px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase">Total Recebido</div>
+        <div style="font-size:20px;font-weight:700;color:#c62828">R$ ${totalGasto.toFixed(2).replace('.',',')}</div>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:120px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase">Pendente</div>
+        <div style="font-size:20px;font-weight:700;color:#f57f17">R$ ${totalPend.toFixed(2).replace('.',',')}</div>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:120px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase">Compras no Período</div>
+        <div style="font-size:20px;font-weight:700;color:#1565c0">${compras.length}</div>
+      </div>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="background:#1a1e2e;">
+        <th style="padding:7px 10px;text-align:left;color:#f0c040;font-size:10px">Data</th>
+        <th style="padding:7px 10px;text-align:left;color:#f0c040;font-size:10px">Fornecedor</th>
+        <th style="padding:7px 10px;text-align:left;color:#f0c040;font-size:10px">Produto</th>
+        <th style="padding:7px 10px;text-align:center;color:#f0c040;font-size:10px">Qtd</th>
+        <th style="padding:7px 10px;text-align:right;color:#f0c040;font-size:10px">Custo Unit.</th>
+        <th style="padding:7px 10px;text-align:right;color:#f0c040;font-size:10px">Total</th>
+        <th style="padding:7px 10px;text-align:center;color:#f0c040;font-size:10px">Status</th>
+      </tr></thead>
+      <tbody>
+      ${compras.map((c,i)=>{
+        const bg=i%2===0?'#fff':'#f9f9f9';
+        const stCor=c.status==='recebido'?'#2e7d32':c.status==='pendente'?'#f57f17':'#c62828';
+        const stBg=c.status==='recebido'?'#e8f5e9':c.status==='pendente'?'#fffde7':'#ffebee';
+        const stTxt=c.status==='recebido'?'✅ RECEBIDO':c.status==='pendente'?'⏳ PENDENTE':'❌ CANCELADO';
+        return`<tr style="background:${bg}">
+          <td style="padding:6px 10px;font-size:10px">${fmtDateFull(c.criado_em)}</td>
+          <td style="padding:6px 10px;font-weight:600">${c.fornecedor}</td>
+          <td style="padding:6px 10px">${c.produto}</td>
+          <td style="padding:6px 10px;text-align:center;font-weight:600">${c.qty}</td>
+          <td style="padding:6px 10px;text-align:right;color:#555">R$ ${Number(c.custo_unit||0).toFixed(2).replace('.',',')}</td>
+          <td style="padding:6px 10px;text-align:right;font-weight:700;color:#c62828">R$ ${Number(c.valor_total).toFixed(2).replace('.',',')}</td>
+          <td style="padding:6px 10px;text-align:center"><span style="padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;background:${stBg};color:${stCor}">${stTxt}</span></td>
+        </tr>`;
+      }).join('')||`<tr><td colspan="7" style="text-align:center;padding:20px;color:#999">Nenhuma compra no período</td></tr>`}
+      </tbody>
+      <tfoot><tr style="background:#1a1e2e">
+        <td colspan="5" style="padding:8px 10px;font-weight:700;color:#f0c040;font-size:11px">TOTAL RECEBIDO NO PERÍODO</td>
+        <td style="padding:8px 10px;text-align:right;font-weight:700;color:#f0c040;font-size:13px">R$ ${totalGasto.toFixed(2).replace('.',',')}</td>
+        <td></td>
+      </tr></tfoot>
+    </table>
+    <div style="margin-top:14px;font-size:10px;color:#aaa;text-align:center">🍺 Malte Distribuidora — ${agora}</div>
+  </div>`;
+
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=html; pa.style.display='block';
+  window.print();
+  pa.style.display='none'; pa.innerHTML='';
 }
 
 async function alterarStatusCompra(id, novoStatus, statusAtual, qty, produto, custoUnit){
