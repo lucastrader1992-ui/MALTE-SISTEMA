@@ -475,8 +475,9 @@ async function renderCaixa(){
     <div style="display:flex;gap:7px;flex-wrap:wrap;">
       ${caixaAberto
         ?`<button class="btn btn-orange btn-sm" onclick="registrarSaidaCaixa()">💸 Saída</button>
-           <button class="btn btn-teal btn-sm" onclick="relatorioTurno()">📋 Relatório Turno</button>
-           <button class="btn btn-danger btn-sm" onclick="fecharCaixa()">Fechar Caixa</button>`
+           <button class="btn btn-teal btn-sm" onclick="relatorioTurno()">📋 Ver Relatório</button>
+           <button class="btn btn-secondary btn-sm" onclick="imprimirRelatorioAgora()">🖨️ Imprimir PDF</button>
+           <button class="btn btn-danger btn-sm" onclick="fecharCaixa()">🔒 Fechar Caixa</button>`
         :`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
     </div>
   </div>
@@ -740,6 +741,38 @@ async function registrarLog(acao,detalhe){
   await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe}).catch(()=>{});
 }
 
+async function imprimirRelatorioAgora(){
+  // Imprime o PDF a qualquer hora sem fechar o caixa
+  openModal(`<h3>🖨️ Imprimir Relatório</h3>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:14px">Escolha o que deseja imprimir agora:</p>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+      <input type="checkbox" id="imp-turno" checked style="width:16px;height:16px;accent-color:var(--gold)">
+      📋 Relatório de Turno (resumo do operador)
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+      <input type="checkbox" id="imp-fechamento" checked style="width:16px;height:16px;accent-color:var(--gold)">
+      🔒 Relatório de Fechamento (detalhado ADM)
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+      <input type="checkbox" id="imp-juntos" style="width:16px;height:16px;accent-color:var(--gold)">
+      📄 Juntar os dois num único PDF
+    </label>
+  </div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="confirmarImprimirAgora()">🖨️ Imprimir</button>
+  </div>`);
+}
+
+async function confirmarImprimirAgora(){
+  const t=document.getElementById('imp-turno')?.checked;
+  const f=document.getElementById('imp-fechamento')?.checked;
+  const j=document.getElementById('imp-juntos')?.checked;
+  closeModal();
+  await gerarPdfFechamento(t,f,j,new Date().toISOString());
+}
+
 function abrirCaixa(){
   openModal(`<h3>💰 Abrir Caixa</h3>
   <div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div>
@@ -756,14 +789,189 @@ function confirmarAbrirCaixa(){
 }
 function fecharCaixa(){
   openModal(`<h3>🔒 Fechar Caixa</h3>
-  <p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento do caixa?</p>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:14px">Antes de fechar, deseja registrar alguma saída de dinheiro?</p>
+
+  <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px;border:1px solid var(--border);">
+    <div style="font-size:12px;font-weight:600;color:var(--orange);margin-bottom:10px">💸 Saída no Fechamento (opcional)</div>
+    <div class="modal-field">
+      <label>Valor (R$) — deixe 0 se não houver saída</label>
+      <input type="number" id="saida-fech-valor" value="0" step="0.01" min="0">
+    </div>
+    <div class="modal-field">
+      <label>Motivo</label>
+      <select id="saida-fech-motivo" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+        <option value="">Nenhuma saída</option>
+        <option value="Sangria">Sangria (retirada pelo ADM)</option>
+        <option value="Troco para cliente">Troco para cliente</option>
+        <option value="Pagamento de fornecedor">Pagamento de fornecedor</option>
+        <option value="Despesa operacional">Despesa operacional</option>
+        <option value="Outro">Outro</option>
+      </select>
+    </div>
+    <div class="modal-field" id="fech-obs-wrap" style="display:none">
+      <label>Especificar</label>
+      <input type="text" id="saida-fech-obs" placeholder="Detalhe...">
+    </div>
+  </div>
+
+  <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px;border:1px solid var(--border);">
+    <div style="font-size:12px;font-weight:600;color:var(--teal);margin-bottom:8px">🖨️ Relatório PDF no fechamento</div>
+    <div style="display:flex;flex-direction:column;gap:7px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="pdf-turno" checked style="width:16px;height:16px;accent-color:var(--gold)">
+        📋 Relatório de Turno (resumo operador)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="pdf-fechamento" checked style="width:16px;height:16px;accent-color:var(--gold)">
+        🔒 Relatório de Fechamento de Caixa (ADM)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="pdf-juntos" style="width:16px;height:16px;accent-color:var(--gold)">
+        📄 Imprimir os dois juntos em um PDF
+      </label>
+    </div>
+  </div>
+
   <div class="modal-actions">
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-    <button class="btn btn-danger" onclick="confirmarFecharCaixa()">Fechar Caixa</button>
-  </div>`);
+    <button class="btn btn-danger" onclick="confirmarFecharCaixa()">🔒 Fechar e Gerar PDF</button>
+  </div>
+
+  <script>
+    document.getElementById('saida-fech-motivo').addEventListener('change',function(){
+      document.getElementById('fech-obs-wrap').style.display=this.value==='Outro'?'block':'none';
+    });
+  <\/script>`);
 }
-function confirmarFecharCaixa(){
-  caixaAberto=null;localStorage.removeItem('malte_caixa');closeModal();renderCaixa();
+
+async function confirmarFecharCaixa(){
+  // Registrar saída se houver
+  const valor=parseFloat(document.getElementById('saida-fech-valor')?.value)||0;
+  const motivoSel=document.getElementById('saida-fech-motivo')?.value;
+  const obs=document.getElementById('saida-fech-obs')?.value?.trim();
+  const motivo=motivoSel==='Outro'?obs:motivoSel;
+
+  if(valor>0 && motivo){
+    await sb.from('saidas_caixa').insert({
+      valor,motivo,autorizado_por:currentUser.nome,operador:currentUser.nome
+    }).catch(()=>{});
+    await registrarLog('SAÍDA FECHAMENTO',`${fmt(valor)} — ${motivo}`);
+  }
+
+  // Verificar quais PDFs imprimir
+  const impTurno=document.getElementById('pdf-turno')?.checked;
+  const impFechamento=document.getElementById('pdf-fechamento')?.checked;
+  const impJuntos=document.getElementById('pdf-juntos')?.checked;
+
+  // Fechar caixa
+  const horaFechamento=new Date().toISOString();
+  await registrarLog('FECHA CAIXA',`Operador: ${currentUser.nome}`);
+  caixaAberto=null;localStorage.removeItem('malte_caixa');
+  closeModal();
+
+  // Gerar PDF(s)
+  if(impTurno||impFechamento){
+    await gerarPdfFechamento(impTurno,impFechamento,impJuntos,horaFechamento);
+  }
+  renderCaixa();
+}
+
+async function gerarPdfFechamento(turno,fechamento,juntos,horaFech){
+  const data=new Date().toISOString().split('T')[0];
+  const tsInicio=new Date(`${data}T06:00:00`).toISOString();
+  const dtFim=new Date(horaFech);
+  const tsFim=dtFim.toISOString();
+
+  const [{data:V},{data:S},{data:L}]=await Promise.all([
+    sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('log_acoes').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false})
+  ]);
+
+  const vendas=V||[];const saidas=S||[];const logs=L||[];
+  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
+  const saldo=totalVendas-totalSaidas;
+  const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  const agora=new Date().toLocaleString('pt-BR');
+  const abertura=localStorage.getItem('malte_caixa_abertura_bkp')||'—';
+
+  const estiloBase=`background:#fff;color:#000;font-family:'Courier New',monospace;font-size:11px;padding:24px;max-width:420px;margin:0 auto;`;
+
+  // PDF TURNO (operador)
+  const htmlTurno=`
+  <div style="${estiloBase}page-break-after:${juntos?'always':'auto'}">
+    <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:10px;">
+      <div style="font-size:15px;font-weight:700">🍺 MALTE DISTRIBUIDORA</div>
+      <div style="font-size:11px;margin-top:2px">RELATÓRIO DE TURNO — OPERADOR</div>
+      <div style="font-size:10px;color:#555;margin-top:3px">${agora}</div>
+    </div>
+    <div style="margin-bottom:6px"><b>Operador:</b> ${currentUser.nome}</div>
+    <div style="border-top:1px dashed #000;border-bottom:1px dashed #000;margin:8px 0;padding:7px 0;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Total Vendas:</span><b>${fmt(totalVendas)}</b></div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Saídas:</span><b style="color:#c0392b">- ${fmt(totalSaidas)}</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:5px"><b>SALDO ENTREGUE:</b><b>${fmt(saldo)}</b></div>
+    </div>
+    <div style="margin-bottom:5px"><b>Formas de pagamento:</b></div>
+    ${Object.entries(porPag).map(([k,v])=>`<div style="display:flex;justify-content:space-between"><span>${k.toUpperCase()}</span><span>${fmt(v)}</span></div>`).join('')}
+    ${saidas.length>0?`<div style="border-top:1px dashed #000;margin:8px 0;padding-top:6px"><b>Saídas:</b></div>
+    ${saidas.map(s=>`<div style="margin-bottom:3px;font-size:10px">• ${fmtDate(s.criado_em)} | ${s.motivo} | ${fmt(s.valor)}</div>`).join('')}`:''}
+    <div style="margin-top:30px;display:flex;justify-content:space-between;gap:20px;">
+      <div style="flex:1;text-align:center;border-top:1px solid #000;padding-top:4px;font-size:10px">Assinatura Operador</div>
+      <div style="flex:1;text-align:center;border-top:1px solid #000;padding-top:4px;font-size:10px">Conferido por</div>
+    </div>
+  </div>`;
+
+  // PDF FECHAMENTO (ADM — mais detalhado)
+  const htmlFechamento=`
+  <div style="${estiloBase}">
+    <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:10px;">
+      <div style="font-size:15px;font-weight:700">🍺 MALTE DISTRIBUIDORA</div>
+      <div style="font-size:11px;margin-top:2px">FECHAMENTO DE CAIXA — ADM</div>
+      <div style="font-size:10px;color:#555;margin-top:3px">${agora}</div>
+    </div>
+    <div style="margin-bottom:4px"><b>Operador:</b> ${currentUser.nome}</div>
+    <div style="border-top:1px dashed #000;border-bottom:1px dashed #000;margin:8px 0;padding:7px 0;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Total Vendas (${vendas.length} transações):</span><b>${fmt(totalVendas)}</b></div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Total Saídas (${saidas.length}):</span><b style="color:#c0392b">- ${fmt(totalSaidas)}</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:5px;border-top:1px solid #000;padding-top:5px"><b>SALDO FINAL:</b><b>${fmt(saldo)}</b></div>
+    </div>
+    <div style="margin-bottom:5px"><b>Detalhamento por pagamento:</b></div>
+    ${Object.entries(porPag).map(([k,v])=>`<div style="display:flex;justify-content:space-between"><span>${k.toUpperCase()}</span><span>${fmt(v)}</span></div>`).join('')}
+    ${saidas.length>0?`
+    <div style="border-top:1px dashed #000;margin:8px 0;padding-top:6px"><b>Saídas de caixa:</b></div>
+    <table style="width:100%;font-size:10px;border-collapse:collapse;">
+      <tr style="border-bottom:1px solid #ddd"><th style="text-align:left;padding:2px">Hora</th><th style="text-align:left;padding:2px">Motivo</th><th style="text-align:right;padding:2px">Valor</th><th style="text-align:left;padding:2px">Autor</th></tr>
+      ${saidas.map(s=>`<tr><td style="padding:2px">${fmtDate(s.criado_em)}</td><td style="padding:2px">${s.motivo}</td><td style="padding:2px;text-align:right">${fmt(s.valor)}</td><td style="padding:2px">${s.autorizado_por}</td></tr>`).join('')}
+    </table>`:''}
+    ${logs.length>0?`
+    <div style="border-top:1px dashed #000;margin:8px 0;padding-top:6px"><b>Log de ações (${logs.length}):</b></div>
+    ${logs.slice(0,15).map(l=>`<div style="font-size:10px;margin-bottom:2px">${fmtDate(l.criado_em)} | <b>${l.operador}</b> | ${l.acao} | ${l.detalhe||''}</div>`).join('')}`:''}
+    <div style="margin-top:30px;display:flex;justify-content:space-between;gap:20px;">
+      <div style="flex:1;text-align:center;border-top:1px solid #000;padding-top:4px;font-size:10px">Operador: ${currentUser.nome}</div>
+      <div style="flex:1;text-align:center;border-top:1px solid #000;padding-top:4px;font-size:10px">Administrador</div>
+    </div>
+  </div>`;
+
+  const pa=document.getElementById('print-area');
+  let conteudo='';
+  if(juntos){
+    conteudo=(turno?htmlTurno:'')+(fechamento?htmlFechamento:'');
+  } else {
+    // Imprimir separado: primeiro turno, depois fechamento
+    if(turno&&fechamento){
+      conteudo=htmlTurno+'<div style="page-break-before:always"></div>'+htmlFechamento;
+    } else if(turno){
+      conteudo=htmlTurno;
+    } else {
+      conteudo=htmlFechamento;
+    }
+  }
+  pa.innerHTML=conteudo;
+  pa.style.display='block';
+  window.print();
+  pa.style.display='none';
+  pa.innerHTML='';
 }
 
 async function verComprovante(vendaId){
