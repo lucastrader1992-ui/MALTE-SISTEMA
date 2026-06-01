@@ -166,35 +166,29 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 .fin-card.receber{border-left:3px solid var(--green);}
 .fin-card.pago{opacity:0.5;}
 
-/* COMPROVANTE */
 .comprovante{background:#fff;color:#000;padding:20px;border-radius:var(--radius);font-family:'Courier New',monospace;font-size:12px;line-height:1.6;max-width:320px;margin:0 auto;}
 .comprovante h2{text-align:center;font-size:14px;margin-bottom:4px;}
 .comprovante .linha{border-top:1px dashed #000;margin:8px 0;}
 .comprovante .item{display:flex;justify-content:space-between;}
 .comprovante .total{font-weight:700;font-size:14px;}
 
-/* TAREFAS */
 .tarefa-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;}
 .tarefa-card.concluida{opacity:0.5;}
 .tarefa-check{width:20px;height:20px;border-radius:50%;border:2px solid var(--border2);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
 .tarefa-check.ok{background:var(--green);border-color:var(--green);color:#fff;font-size:12px;}
 .tarefa-prioridade{width:4px;height:40px;border-radius:2px;flex-shrink:0;}
 
-/* ANOTACOES */
 .nota-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:8px;}
 .nota-card:hover{border-color:var(--border2);}
 
-/* CMV */
 .cmv-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px;}
 .cmv-bar{height:12px;border-radius:6px;background:var(--bg3);overflow:hidden;margin-top:8px;}
 .cmv-fill{height:100%;border-radius:6px;transition:width 0.5s;}
 
-/* COMISSOES */
 .com-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;}
 
 @media(max-width:600px){.stats-grid{grid-template-columns:1fr 1fr;}.content{padding:12px 10px;}}
 
-/* PRINT PDF */
 @media print{
   body{background:#fff !important;}
   #app .topbar,#app .nav,.no-print{display:none !important;}
@@ -205,7 +199,6 @@ tr:hover td{background:rgba(255,255,255,0.02);}
   .print-area{position:fixed;top:0;left:0;width:100%;}
 }
 
-/* RELATÓRIO PDF */
 .relatorio-pdf-area{background:#fff;color:#000;padding:30px;font-family:'Segoe UI',sans-serif;font-size:13px;}
 .relatorio-pdf-area h1{font-size:20px;font-weight:700;margin-bottom:4px;color:#1a1a2e;}
 .relatorio-pdf-area .rel-sub{font-size:11px;color:#666;margin-bottom:20px;}
@@ -230,7 +223,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <div class="login-brand">
       <div class="login-brand-icon">🍺</div>
       <h1>Malte Distribuidora</h1>
-      <p>Sistema de Gestão v4.0</p>
+      <p>Sistema de Gestão v4.1</p>
     </div>
     <div class="login-roles">
       <button class="role-btn active" onclick="setRole('adm')">👑 Administrador</button>
@@ -301,20 +294,12 @@ let SENHAS={adm:'11300955',caixa:'1234'};
 const USERS={adm:{role:'adm',nome:'Administrador'},caixa:{role:'caixa',nome:'Caixa'}};
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
-let mesaPollingInterval=null; // FIX 2: controle do polling das mesas
+let mesaPollingInterval=null;
 
-// ══════════════════════════════════════════════
-// FIX 1: DIA COMERCIAL — 06:00 às 05:59 do dia seguinte
-// ══════════════════════════════════════════════
 function getDiaComercial(){
   const agora=new Date();
-  // Se hora < 6, o dia comercial é o dia anterior
-  if(agora.getHours()<6){
-    agora.setDate(agora.getDate()-1);
-  }
-  // Início: hoje às 06:00
+  if(agora.getHours()<6){agora.setDate(agora.getDate()-1);}
   const inicio=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate(),6,0,0,0);
-  // Fim: amanhã às 05:59:59
   const fim=new Date(inicio);
   fim.setDate(fim.getDate()+1);
   fim.setHours(5,59,59,999);
@@ -327,16 +312,11 @@ function isHojeComercial(dataStr){
   return dt>=inicio&&dt<=fim;
 }
 
-// ══════════════════════════════════════════════
-// FIX 3: SESSÃO PERSISTENTE — não sai ao recarregar
-// ══════════════════════════════════════════════
 window.addEventListener('load',async()=>{
   const s=localStorage.getItem('malte_senhas');
   if(s)try{SENHAS=JSON.parse(s);}catch(e){}
   const c=localStorage.getItem('malte_caixa');
   if(c)try{caixaAberto=JSON.parse(c);}catch(e){}
-
-  // Restaurar sessão salva
   const sessao=localStorage.getItem('malte_sessao');
   if(sessao){
     try{
@@ -353,7 +333,6 @@ window.addEventListener('load',async()=>{
       }
     }catch(e){}
   }
-
   try{await sb.from('produtos').select('id').limit(1);}catch(e){}
   document.getElementById('loading-screen').style.display='none';
   document.getElementById('login-screen').style.display='flex';
@@ -370,7 +349,6 @@ function doLogin(){
   const p=document.getElementById('login-pass').value;
   if(!USERS[u]||SENHAS[u]!==p){document.getElementById('login-err').textContent='Usuário ou senha incorretos.';return;}
   currentUser={...USERS[u],id:u};
-  // FIX 3: salvar sessão no localStorage
   localStorage.setItem('malte_sessao',JSON.stringify(currentUser));
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
@@ -382,7 +360,6 @@ function doLogin(){
 
 function doLogout(){
   currentUser=null;balcaoItens=[];
-  // FIX 3: limpar sessão ao sair
   localStorage.removeItem('malte_sessao');
   stopMesaPolling();
   document.getElementById('app').style.display='none';
@@ -411,13 +388,12 @@ function openModal(html){document.getElementById('modal-content').innerHTML=html
 function closeModal(){document.getElementById('modal-overlay').classList.remove('open');}
 document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
 
-// FIX 2: parar polling ao trocar de aba
 function stopMesaPolling(){
   if(mesaPollingInterval){clearInterval(mesaPollingInterval);mesaPollingInterval=null;}
 }
 
 function goTab(tab){
-  stopMesaPolling(); // para polling ao sair de mesas
+  stopMesaPolling();
   currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{
@@ -443,9 +419,6 @@ function selPay(tipo){
   if(el)el.classList.add('sel');
 }
 
-// ══════════════════════════════════════════════
-// DASHBOARD — usa dia comercial (FIX 1)
-// ══════════════════════════════════════════════
 async function renderDashboard(){
   const[{data:V},{data:M},{data:P},{data:FP},{data:FR},{data:T}]=await Promise.all([
     sb.from('vendas').select('*').order('criado_em',{ascending:false}).limit(50),
@@ -455,7 +428,6 @@ async function renderDashboard(){
     sb.from('financeiro').select('*').eq('tipo','receber').eq('pago',false),
     sb.from('tarefas').select('*').eq('concluida',false),
   ]);
-  // FIX 1: filtro com dia comercial
   const hojeV=(V||[]).filter(v=>isHojeComercial(v.criado_em));
   const totalHoje=hojeV.reduce((s,v)=>s+Number(v.total),0);
   const mesasOcupadas=(M||[]).filter(m=>m.status==='ocupada').length;
@@ -465,7 +437,6 @@ async function renderDashboard(){
   const caixaInfo=caixaAberto?`<span class="badge badge-green">ABERTO desde ${fmtDate(caixaAberto.abertura)}</span>`:`<span class="badge badge-red">FECHADO</span>`;
   const{inicio}=getDiaComercial();
   const labelDia=inicio.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit'});
-
   document.getElementById('tab-content').innerHTML=`
   <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span style="font-size:12px;color:var(--text2)">Caixa:</span>${caixaInfo}
@@ -492,12 +463,8 @@ async function renderDashboard(){
   </table></div>`;
 }
 
-// ══════════════════════════════════════════════
-// CAIXA — usa dia comercial (FIX 1) + sem senha pra fechar (FIX 4)
-// ══════════════════════════════════════════════
 async function renderCaixa(){
   const{data:V}=await sb.from('vendas').select('*').order('criado_em',{ascending:false});
-  // FIX 1: filtro com dia comercial
   const hojeV=(V||[]).filter(v=>isHojeComercial(v.criado_em));
   const totalHoje=hojeV.reduce((s,v)=>s+Number(v.total),0);
   const porPag={};hojeV.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
@@ -508,7 +475,6 @@ async function renderCaixa(){
       ${caixaAberto?`<div style="font-size:12px;color:var(--text2);margin-top:3px">Aberto às ${fmtDateFull(caixaAberto.abertura)} | Troco: ${fmt(caixaAberto.troco)}</div>`:''}
     </div>
     ${caixaAberto
-      // FIX 4: fechar caixa SEM pedir senha
       ?`<button class="btn btn-danger btn-sm" onclick="fecharCaixa()">Fechar Caixa</button>`
       :`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
   </div>
@@ -545,7 +511,6 @@ function confirmarAbrirCaixa(){
   localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));
   closeModal();renderCaixa();
 }
-// FIX 4: fechar caixa direto, sem senha
 function fecharCaixa(){
   openModal(`<h3>🔒 Fechar Caixa</h3>
   <p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento do caixa?</p>
@@ -596,9 +561,6 @@ function imprimirComprovante(id){
   pa.innerHTML='';
 }
 
-// ══════════════════════════════════════════════
-// MESAS — com atualização em tempo real (FIX 2)
-// ══════════════════════════════════════════════
 async function renderMesas(){
   const[{data:M},{data:I}]=await Promise.all([
     sb.from('mesas').select('*').order('id'),
@@ -620,8 +582,6 @@ async function renderMesas(){
       ${m.status==='ocupada'&&totais[m.id]?`<div class="mesa-total">${fmt(totais[m.id])}</div>`:''}
     </div>`).join('')}
   </div>`;
-
-  // FIX 2: polling a cada 5 segundos para atualizar os totais das mesas
   stopMesaPolling();
   mesaPollingInterval=setInterval(async()=>{
     if(currentTab!=='mesas')return stopMesaPolling();
@@ -668,7 +628,6 @@ async function modalMesaAberta(id){
   const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
   const pagoParcial=m.pago_parcial||0;
   const restante=total-pagoParcial;
-
   openModal(`
   <h3>🍺 Mesa ${id}</h3>
   <div style="display:flex;justify-content:space-between;margin-bottom:12px;">
@@ -796,7 +755,6 @@ async function addItemMesa(mesaId){
   await modalMesaAberta(mesaId);
 }
 
-// FIX 5: senha apenas para remover produto da mesa (não para fechar caixa)
 async function removerItemMesa(itemId,mesaId){
   const doRemover=async()=>{await sb.from('mesa_itens').delete().eq('id',itemId);await modalMesaAberta(mesaId);};
   if(currentUser.id==='adm'){doRemover();}
@@ -824,9 +782,6 @@ async function cancelarMesa(id){
   closeModal();renderMesas();
 }
 
-// ══════════════════════════════════════════════
-// BALCÃO
-// ══════════════════════════════════════════════
 async function renderBalcao(){
   const{data:prods}=await sb.from('produtos').select('*').order('nome');
   const P=prods||[];
@@ -902,9 +857,6 @@ async function finalizarBalcao(){
   }
 }
 
-// ══════════════════════════════════════════════
-// ESTOQUE
-// ══════════════════════════════════════════════
 async function renderEstoque(){
   const[{data:P},{data:E}]=await Promise.all([
     sb.from('produtos').select('*').order('nome'),
@@ -954,9 +906,6 @@ async function confirmarEntrada(){
   closeModal();renderEstoque();
 }
 
-// ══════════════════════════════════════════════
-// PRODUTOS — senha só no remover (FIX 5)
-// ══════════════════════════════════════════════
 async function renderProdutos(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
   document.getElementById('tab-content').innerHTML=`
@@ -1088,9 +1037,6 @@ async function togglePromo(id,ativar){
   gerenciarPromocoes();
 }
 
-// ══════════════════════════════════════════════
-// FINANCEIRO
-// ══════════════════════════════════════════════
 async function renderFinanceiro(){
   const{data:F}=await sb.from('financeiro').select('*').order('vencimento',{ascending:true});
   const pagar=(F||[]).filter(f=>f.tipo==='pagar');
@@ -1147,9 +1093,6 @@ async function salvarConta(tipo){
 }
 async function pagarConta(id){await sb.from('financeiro').update({pago:true}).eq('id',id);renderFinanceiro();}
 
-// ══════════════════════════════════════════════
-// COMPRAS
-// ══════════════════════════════════════════════
 async function renderCompras(){
   const{data:C}=await sb.from('compras').select('*').order('criado_em',{ascending:false});
   document.getElementById('tab-content').innerHTML=`
@@ -1198,9 +1141,6 @@ async function salvarCompra(){
   closeModal();renderCompras();
 }
 
-// ══════════════════════════════════════════════
-// CMV
-// ══════════════════════════════════════════════
 async function renderCMV(){
   const[{data:V},{data:VI},{data:P}]=await Promise.all([
     sb.from('vendas').select('*').order('criado_em',{ascending:false}),
@@ -1211,7 +1151,6 @@ async function renderCMV(){
   const inicioMes=new Date(hoje.getFullYear(),hoje.getMonth(),1);
   const inicioSemana=new Date(hoje);
   inicioSemana.setDate(hoje.getDate()-hoje.getDay());
-
   function calcPeriodo(vendas){
     const totalV=vendas.reduce((s,v)=>s+Number(v.total),0);
     const idsV=new Set(vendas.map(v=>v.id));
@@ -1220,26 +1159,21 @@ async function renderCMV(){
     const cmvPct=totalV>0?((totalC/totalV)*100).toFixed(1):0;
     return{totalV,totalC,cmvPct};
   }
-
-  // FIX 1: usa dia comercial para "hoje"
   const diasHoje=(V||[]).filter(v=>isHojeComercial(v.criado_em));
   const diasSemana=(V||[]).filter(v=>new Date(v.criado_em)>=inicioSemana);
   const diasMes=(V||[]).filter(v=>new Date(v.criado_em)>=inicioMes);
-
   const dHoje=calcPeriodo(diasHoje);
   const dSem=calcPeriodo(diasSemana);
   const dMes=calcPeriodo(diasMes);
   const dTodo=calcPeriodo(V||[]);
-
   const porProd={};
   (VI||[]).forEach(i=>{
     const p=(P||[]).find(x=>i.nome.includes(x.nome));
-    if(!porProd[i.nome])porProd[i.nome]={qty:0,vendas:0,custo:0,preco:p?Number(p.preco):0,custoUnit:p?Number(p.custo):0};
+    if(!porProd[i.nome])porProd[i.nome]={qty:0,vendas:0,custo:0};
     porProd[i.nome].qty+=i.qty;
     porProd[i.nome].vendas+=Number(i.total);
     porProd[i.nome].custo+=(p?Number(p.custo)*i.qty:0);
   });
-
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><div class="section-title">📉 CMV — Custo da Mercadoria Vendida</div>
     <div class="section-sub">Quanto do faturamento foi para cobrir o custo dos produtos</div></div></div>
@@ -1277,9 +1211,6 @@ async function renderCMV(){
   </table></div>`;
 }
 
-// ══════════════════════════════════════════════
-// COMISSÕES
-// ══════════════════════════════════════════════
 async function renderComissoes(){
   const{data:C}=await sb.from('comissoes').select('*').order('criado_em',{ascending:false});
   const totalPago=(C||[]).filter(c=>c.pago).reduce((s,c)=>s+Number(c.valor),0);
@@ -1320,9 +1251,6 @@ async function salvarComissao(){
 }
 async function pagarComissao(id){await sb.from('comissoes').update({pago:true}).eq('id',id);renderComissoes();}
 
-// ══════════════════════════════════════════════
-// TAREFAS
-// ══════════════════════════════════════════════
 async function renderTarefas(){
   const{data:T}=await sb.from('tarefas').select('*').order('criado_em',{ascending:false});
   const pendentes=(T||[]).filter(t=>!t.concluida);
@@ -1374,9 +1302,6 @@ async function salvarTarefa(){
 async function toggleTarefa(id,status){await sb.from('tarefas').update({concluida:status}).eq('id',id);renderTarefas();}
 async function deletarTarefa(id){await sb.from('tarefas').delete().eq('id',id);renderTarefas();}
 
-// ══════════════════════════════════════════════
-// ANOTAÇÕES
-// ══════════════════════════════════════════════
 async function renderAnotacoes(){
   const{data:A}=await sb.from('anotacoes').select('*').order('criado_em',{ascending:false});
   document.getElementById('tab-content').innerHTML=`
@@ -1422,76 +1347,276 @@ async function salvarAnotacao(){
 async function deletarAnotacao(id){await sb.from('anotacoes').delete().eq('id',id);renderAnotacoes();}
 
 // ══════════════════════════════════════════════
-// RELATÓRIOS — com filtro de período + botão PDF (FIX 6)
+// RELATÓRIOS v2 — Filtros + ROI + Estratégias CMV
 // ══════════════════════════════════════════════
 async function renderRelatorios(){
-  const[{data:V},{data:VI},{data:P}]=await Promise.all([
-    sb.from('vendas').select('*').order('criado_em',{ascending:false}),
-    sb.from('venda_itens').select('*'),
-    sb.from('produtos').select('*')
-  ]);
-  const totalV=(V||[]).reduce((s,v)=>s+Number(v.total),0);
-  const porPag={};(V||[]).forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
-  const porProd={};(VI||[]).forEach(i=>{porProd[i.nome]=(porProd[i.nome]||0)+i.qty;});
-  const ranking=Object.entries(porProd).sort((a,b)=>b[1]-a[1]);
-  const totalCusto=(VI||[]).reduce((s,i)=>{const p=(P||[]).find(x=>i.nome.includes(x.nome));return s+(p?Number(p.custo)*i.qty:0);},0);
-  const lucro=totalV-totalCusto;
-  const margem=totalV>0?(lucro/totalV*100).toFixed(1):0;
-
+  const hoje=new Date();
+  const inicioMes=new Date(hoje.getFullYear(),hoje.getMonth(),1).toISOString().split('T')[0];
+  const fimMes=hoje.toISOString().split('T')[0];
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr">
     <div class="section-title">📈 Relatórios</div>
     <button class="btn btn-primary btn-sm" onclick="imprimirRelatorio()">🖨️ Imprimir / Salvar PDF</button>
   </div>
-
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--gold2)">🔍 Filtros de Período</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;align-items:end;">
+      <div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px">Data Início</div>
+        <input type="date" id="filtro-inicio" value="${inicioMes}" style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px">Data Fim</div>
+        <input type="date" id="filtro-fim" value="${fimMes}" style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px">Hora Início</div>
+        <input type="time" id="filtro-hora-inicio" value="00:00" style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px">Hora Fim</div>
+        <input type="time" id="filtro-hora-fim" value="23:59" style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.8px">Atalhos</div>
+        <select id="filtro-atalho" onchange="aplicarAtalhoFiltro(this.value)" style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+          <option value="">Selecionar...</option>
+          <option value="hoje">Hoje</option>
+          <option value="ontem">Ontem</option>
+          <option value="semana">Esta Semana</option>
+          <option value="mes">Este Mês</option>
+          <option value="mes_passado">Mês Passado</option>
+          <option value="tudo">Todo o Período</option>
+        </select>
+      </div>
+      <div>
+        <button class="btn btn-primary" style="width:100%" onclick="aplicarFiltroRelatorio()">🔍 Filtrar</button>
+      </div>
+    </div>
+  </div>
   <div id="relatorio-conteudo">
-    <div class="stats-grid">
-      <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalV)}</div></div>
-      <div class="stat-card stat-red"><div class="stat-label">Custo</div><div class="stat-value">${fmt(totalCusto)}</div></div>
-      <div class="stat-card stat-green"><div class="stat-label">Lucro</div><div class="stat-value">${fmt(lucro)}</div><div class="stat-sub">${margem}% margem</div></div>
-      <div class="stat-card stat-blue"><div class="stat-label">Transações</div><div class="stat-value">${(V||[]).length}</div><div class="stat-sub">ticket médio ${fmt(totalV/Math.max(1,(V||[]).length))}</div></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-      <div class="table-wrap"><table><thead><tr><th colspan="2">Por Pagamento</th></tr></thead>
-        <tbody>${Object.entries(porPag).map(([k,v])=>`<tr><td><span class="badge badge-blue">${k.toUpperCase()}</span></td><td style="font-weight:600;color:var(--gold2)">${fmt(v)}</td></tr>`).join('')}</tbody></table></div>
-      <div class="table-wrap"><table><thead><tr><th>Produto Mais Vendido</th><th>Qtd</th></tr></thead>
-        <tbody>${ranking.slice(0,8).map(([n,q],i)=>`<tr><td>${n}</td><td><span class="badge ${i===0?'badge-gold':i<3?'badge-green':'badge-blue'}">${q}</span></td></tr>`).join('')}</tbody></table></div>
-    </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th class="no-print">Comprovante</th></tr></thead>
-      <tbody>${(V||[]).slice(0,30).map(v=>`<tr>
-        <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
-        <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
-        <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
-        <td>${v.operador}</td>
-        <td class="no-print"><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
-      </tr>`).join('')}</tbody>
-    </table></div>
+    <div class="empty"><div class="spinner" style="margin:0 auto"></div><p style="margin-top:12px;color:var(--text2)">Carregando dados...</p></div>
   </div>`;
+  await aplicarFiltroRelatorio();
 }
 
-// FIX 6: imprimir relatório completo como PDF
+function aplicarAtalhoFiltro(val){
+  const hoje=new Date();
+  let inicio,fim;
+  if(val==='hoje'){inicio=fim=hoje.toISOString().split('T')[0];}
+  else if(val==='ontem'){const on=new Date(hoje);on.setDate(on.getDate()-1);inicio=fim=on.toISOString().split('T')[0];}
+  else if(val==='semana'){const s=new Date(hoje);s.setDate(hoje.getDate()-hoje.getDay());inicio=s.toISOString().split('T')[0];fim=hoje.toISOString().split('T')[0];}
+  else if(val==='mes'){inicio=new Date(hoje.getFullYear(),hoje.getMonth(),1).toISOString().split('T')[0];fim=hoje.toISOString().split('T')[0];}
+  else if(val==='mes_passado'){const mp=new Date(hoje.getFullYear(),hoje.getMonth()-1,1);const mpf=new Date(hoje.getFullYear(),hoje.getMonth(),0);inicio=mp.toISOString().split('T')[0];fim=mpf.toISOString().split('T')[0];}
+  else if(val==='tudo'){inicio='2020-01-01';fim=hoje.toISOString().split('T')[0];}
+  else return;
+  document.getElementById('filtro-inicio').value=inicio;
+  document.getElementById('filtro-fim').value=fim;
+  document.getElementById('filtro-hora-inicio').value='00:00';
+  document.getElementById('filtro-hora-fim').value='23:59';
+}
+
+async function aplicarFiltroRelatorio(){
+  const dtInicio=document.getElementById('filtro-inicio')?.value;
+  const dtFim=document.getElementById('filtro-fim')?.value;
+  const hrInicio=document.getElementById('filtro-hora-inicio')?.value||'00:00';
+  const hrFim=document.getElementById('filtro-hora-fim')?.value||'23:59';
+  if(!dtInicio||!dtFim)return;
+  const tsInicio=new Date(`${dtInicio}T${hrInicio}:00`).toISOString();
+  const tsFim=new Date(`${dtFim}T${hrFim}:59`).toISOString();
+  const [{data:V},{data:VI},{data:P},{data:compras}]=await Promise.all([
+    sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('venda_itens').select('*'),
+    sb.from('produtos').select('*'),
+    sb.from('compras').select('*').eq('status','recebido')
+  ]);
+  const vendasF=V||[];
+  const idsV=new Set(vendasF.map(v=>v.id));
+  const itensF=(VI||[]).filter(i=>idsV.has(i.venda_id));
+  const totalV=vendasF.reduce((s,v)=>s+Number(v.total),0);
+  const totalCusto=itensF.reduce((s,i)=>{const p=(P||[]).find(x=>i.nome.includes(x.nome));return s+(p?Number(p.custo)*i.qty:0);},0);
+  const lucro=totalV-totalCusto;
+  const margem=totalV>0?(lucro/totalV*100).toFixed(1):0;
+  const porPag={};vendasF.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  const porProd={};
+  itensF.forEach(i=>{
+    if(!porProd[i.nome])porProd[i.nome]={qty:0,total:0,custo:0};
+    porProd[i.nome].qty+=i.qty;porProd[i.nome].total+=Number(i.total);
+    const p=(P||[]).find(x=>i.nome.includes(x.nome));
+    porProd[i.nome].custo+=(p?Number(p.custo)*i.qty:0);
+  });
+  const ranking=Object.entries(porProd).sort((a,b)=>b[1].qty-a[1].qty);
+  const totalInvestido=(compras||[]).reduce((s,c)=>s+Number(c.valor_total),0);
+  const roi=totalInvestido>0?((lucro/totalInvestido)*100).toFixed(1):null;
+  const roiVal=totalInvestido>0?(lucro/totalInvestido).toFixed(2):null;
+  const cmvPct=totalV>0?((totalCusto/totalV)*100).toFixed(1):0;
+  const labelPeriodo=`${new Date(tsInicio).toLocaleDateString('pt-BR')} ${hrInicio} → ${new Date(tsFim).toLocaleDateString('pt-BR')} ${hrFim}`;
+
+  document.getElementById('relatorio-conteudo').innerHTML=`
+  <div style="font-size:11px;color:var(--text3);margin-bottom:14px">📅 Período: ${labelPeriodo} — ${vendasF.length} transações</div>
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalV)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Custo</div><div class="stat-value">${fmt(totalCusto)}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Lucro</div><div class="stat-value">${fmt(lucro)}</div><div class="stat-sub">${margem}% margem</div></div>
+    <div class="stat-card stat-blue"><div class="stat-label">Transações</div><div class="stat-value">${vendasF.length}</div><div class="stat-sub">ticket médio ${fmt(totalV/Math.max(1,vendasF.length))}</div></div>
+  </div>
+
+  <!-- ROI -->
+  <div style="background:var(--card);border:1px solid ${roi>=50?'rgba(39,174,96,0.4)':roi>=20?'rgba(212,160,23,0.4)':'rgba(192,57,43,0.35)'};border-radius:var(--radius);padding:18px;margin-bottom:18px;">
+    <div style="font-size:13px;font-weight:700;color:var(--gold2);margin-bottom:12px">📊 ROI — Retorno sobre Investimento</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;">
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:14px;text-align:center;">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;margin-bottom:6px">Total Investido (Compras)</div>
+        <div style="font-size:22px;font-weight:700;color:var(--red)">${fmt(totalInvestido)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">Capital em compras registradas</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:14px;text-align:center;">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;margin-bottom:6px">Lucro Gerado</div>
+        <div style="font-size:22px;font-weight:700;color:var(--green)">${fmt(lucro)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">Receita menos custo dos produtos</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:14px;text-align:center;border:1px solid ${roi>=50?'rgba(39,174,96,0.4)':roi>=20?'rgba(212,160,23,0.4)':'rgba(192,57,43,0.35)'};">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;margin-bottom:6px">ROI</div>
+        <div style="font-size:28px;font-weight:700;color:${roi>=50?'var(--green)':roi>=20?'var(--gold2)':'var(--red)'}">${roi!==null?roi+'%':'N/A'}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">${roiVal!==null?'R$ '+roiVal+' retorno por R$ 1,00 investido':'Registre compras para calcular'}</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding:10px;background:var(--bg3);border-radius:var(--radius-sm);font-size:12px;color:var(--text2)">
+      💡 <b style="color:var(--text)">Como interpretar:</b>
+      <span style="color:var(--green)"> ROI acima de 50% = Excelente</span> •
+      <span style="color:var(--gold2)"> 20%–50% = Bom</span> •
+      <span style="color:var(--red)"> Abaixo de 20% = Atenção</span>
+    </div>
+  </div>
+
+  <!-- ESTRATÉGIAS CMV -->
+  <div style="background:var(--card);border:1px solid rgba(230,126,34,0.35);border-radius:var(--radius);padding:18px;margin-bottom:18px;">
+    <div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:4px">🎯 Estratégias para Baixar o CMV (Atual: ${cmvPct}%)</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:14px">Quanto menor o CMV, maior o seu lucro. Meta ideal: abaixo de 40%.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;">
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--green);">
+        <div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:6px">🛒 1. Compra Inteligente por Volume</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7">• Negocie <b style="color:var(--text)">desconto progressivo</b>: quanto mais caixas, menor o preço unitário<br>• Peça tabela por <b style="color:var(--text)">faixa de quantidade</b> (10, 25, 50 caixas)<br>• Compare ao menos <b style="color:var(--text)">3 fornecedores</b> antes de fechar<br>• Priorize produtos com <b style="color:var(--text)">maior saída</b> para negociar volume</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--blue);">
+        <div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px">📅 2. Compra Programada</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7">• Programe compras com <b style="color:var(--text)">5–7 dias de antecedência</b><br>• Compra de emergência sempre sai <b style="color:var(--red)">mais cara</b><br>• Use o Estoque para ver produtos <b style="color:var(--text)">abaixo de 20 unid.</b><br>• Crie uma <b style="color:var(--text)">lista de compras semanal fixa</b></div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--gold);">
+        <div style="font-size:12px;font-weight:700;color:var(--gold2);margin-bottom:6px">💰 3. Revisão dos Preços de Venda</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7">• Use <b style="color:var(--gold2)">Produtos → Sugestão de Preço</b> para ver margens<br>• Margem mínima recomendada: <b style="color:var(--text)">50% sobre o custo</b><br>• Produtos com CMV acima de 60%: <b style="color:var(--red)">reajuste urgente</b><br>• Considere preços diferenciados: mesa vs balcão</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--purple);">
+        <div style="font-size:12px;font-weight:700;color:#b06ed4;margin-bottom:6px">🔄 4. Mix de Produtos Rentáveis</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7">• Identifique produtos com <b style="color:var(--text)">maior margem</b> e incentive a venda<br>• Use <b style="color:var(--gold2)">promoções estratégicas</b> nos de alta margem<br>• Reduza produtos com margem <b style="color:var(--red)">abaixo de 20%</b><br>• Combo: junte itens lucrativos com os mais pedidos</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--teal);">
+        <div style="font-size:12px;font-weight:700;color:var(--teal);margin-bottom:6px">📊 5. Controle de Perdas</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7">• Registre toda entrada no <b style="color:var(--text)">Estoque</b> para rastrear perdas<br>• Estoque esperado ≠ real = <b style="color:var(--red)">desvio ou desperdício</b><br>• Produtos próximos do vencimento: use em <b style="color:var(--text)">promoção relâmpago</b><br>• Treine equipe para não abrir produtos desnecessariamente</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--orange);">
+        <div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:6px">🤝 6. Parceria com Fornecedor Fixo</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7">• Ter <b style="color:var(--text)">1–2 fornecedores fixos</b> dá poder de negociação<br>• Negocie <b style="color:var(--text)">prazo de pagamento</b> (30/60 dias)<br>• Peça <b style="color:var(--text)">bonificação por fidelidade</b> (caixas extras)<br>• Contrato com <b style="color:var(--text)">preço travado por período</b></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TODOS OS PRODUTOS -->
+  <div class="section-hdr" style="margin-top:4px">
+    <div><div class="section-title">📦 Todos os Produtos Vendidos</div><div class="section-sub">${ranking.length} produtos no período</div></div>
+    <input type="text" id="busca-produto-rel" onkeyup="filtrarTabelaProdutos()" placeholder="🔍 Buscar produto..." style="padding:7px 11px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;width:180px;">
+  </div>
+  <div class="table-wrap"><table id="tabela-produtos-rel">
+    <thead><tr>
+      <th>#</th>
+      <th onclick="ordenarTabelaProdutos('nome')" style="cursor:pointer">Produto ↕</th>
+      <th onclick="ordenarTabelaProdutos('qty')" style="cursor:pointer">Qtd ↕</th>
+      <th onclick="ordenarTabelaProdutos('total')" style="cursor:pointer">Faturamento ↕</th>
+      <th onclick="ordenarTabelaProdutos('custo')" style="cursor:pointer">Custo ↕</th>
+      <th onclick="ordenarTabelaProdutos('margem')" style="cursor:pointer">Margem ↕</th>
+    </tr></thead>
+    <tbody id="tbody-produtos-rel">
+      ${ranking.map(([nome,d],i)=>{
+        const mg=d.total>0?(((d.total-d.custo)/d.total)*100).toFixed(0):0;
+        return`<tr><td style="color:var(--text3)">${i+1}</td><td>${nome}</td><td style="font-weight:600">${d.qty}</td><td style="color:var(--gold2);font-weight:600">${fmt(d.total)}</td><td style="color:var(--red)">${fmt(d.custo)}</td><td><span class="badge ${mg>=50?'badge-green':mg>=30?'badge-gold':'badge-red'}">${mg}%</span></td></tr>`;
+      }).join('')||`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma venda no período</td></tr>`}
+    </tbody>
+  </table></div>
+
+  <!-- POR PAGAMENTO + RESUMO -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+    <div class="table-wrap"><table><thead><tr><th colspan="2">Por Forma de Pagamento</th></tr></thead>
+      <tbody>${Object.entries(porPag).map(([k,v])=>`<tr><td><span class="badge badge-blue">${k.toUpperCase()}</span></td><td style="font-weight:600;color:var(--gold2)">${fmt(v)}</td></tr>`).join('')||`<tr><td colspan="2" style="text-align:center;color:var(--text3)">Sem dados</td></tr>`}</tbody>
+    </table></div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text2)">Resumo do Período</div>
+      <div style="font-size:12px;line-height:2;color:var(--text2)">
+        Faturamento: <b style="color:var(--gold2)">${fmt(totalV)}</b><br>
+        Custo total: <b style="color:var(--red)">${fmt(totalCusto)}</b><br>
+        Lucro líquido: <b style="color:var(--green)">${fmt(lucro)}</b><br>
+        Margem: <b style="color:${margem>=50?'var(--green)':margem>=30?'var(--gold2)':'var(--red)'}">${margem}%</b><br>
+        CMV: <b style="color:${cmvPct<=40?'var(--green)':cmvPct<=60?'var(--gold2)':'var(--red)'}">${cmvPct}%</b><br>
+        ROI: <b style="color:${roi>=50?'var(--green)':roi>=20?'var(--gold2)':'var(--red)'}">${roi!==null?roi+'%':'N/A'}</b>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTÓRICO COMPLETO -->
+  <div class="section-hdr">
+    <div class="section-title">📋 Histórico de Vendas</div>
+    <span style="font-size:11px;color:var(--text2)">${vendasF.length} vendas no período</span>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data/Hora</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th class="no-print">Comprovante</th></tr></thead>
+    <tbody>${vendasF.map(v=>`<tr>
+      <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
+      <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
+      <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
+      <td>${v.operador||''}</td>
+      <td class="no-print"><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
+    </tr>`).join('')||`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma venda no período selecionado</td></tr>`}</tbody>
+  </table></div>`;
+}
+
+let _ordemAtual={col:'qty',asc:false};
+function ordenarTabelaProdutos(col){
+  if(_ordemAtual.col===col)_ordemAtual.asc=!_ordemAtual.asc;
+  else{_ordemAtual.col=col;_ordemAtual.asc=false;}
+  const tbody=document.getElementById('tbody-produtos-rel');
+  if(!tbody)return;
+  const rows=Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a,b)=>{
+    const cols={nome:1,qty:2,total:3,custo:4,margem:5};
+    const idx=cols[col]||2;
+    const va=a.cells[idx]?.textContent.replace(/[R$\s%.,]/g,'').replace(',','.')||'0';
+    const vb=b.cells[idx]?.textContent.replace(/[R$\s%.,]/g,'').replace(',','.')||'0';
+    const na=isNaN(va)?va:parseFloat(va);
+    const nb=isNaN(vb)?vb:parseFloat(vb);
+    return _ordemAtual.asc?(na>nb?1:-1):(na<nb?1:-1);
+  });
+  rows.forEach(r=>tbody.appendChild(r));
+}
+
+function filtrarTabelaProdutos(){
+  const busca=document.getElementById('busca-produto-rel')?.value.toLowerCase()||'';
+  const tbody=document.getElementById('tbody-produtos-rel');
+  if(!tbody)return;
+  Array.from(tbody.querySelectorAll('tr')).forEach(r=>{
+    r.style.display=r.textContent.toLowerCase().includes(busca)?'':'none';
+  });
+}
+
 function imprimirRelatorio(){
   const conteudo=document.getElementById('relatorio-conteudo');
-  const{inicio,fim}=getDiaComercial();
-  const dataStr=inicio.toLocaleDateString('pt-BR');
-
+  const{inicio}=getDiaComercial();
   const pa=document.getElementById('print-area');
-  pa.innerHTML=`
-  <div class="relatorio-pdf-area">
-    <h1>🍺 Malte Distribuidora — Relatório Geral</h1>
-    <div class="rel-sub">Gerado em ${new Date().toLocaleString('pt-BR')} | Dia comercial referência: ${dataStr}</div>
-    ${conteudo.innerHTML}
-  </div>`;
+  pa.innerHTML=`<div class="relatorio-pdf-area"><h1>🍺 Malte Distribuidora — Relatório</h1><div class="rel-sub">Gerado em ${new Date().toLocaleString('pt-BR')}</div>${conteudo?conteudo.innerHTML:''}</div>`;
   pa.style.display='block';
   window.print();
   pa.style.display='none';
   pa.innerHTML='';
 }
 
-// ══════════════════════════════════════════════
-// CONFIGURAÇÕES
-// ══════════════════════════════════════════════
 function renderConfiguracoes(){
   document.getElementById('tab-content').innerHTML=`
   <div style="max-width:480px">
@@ -1524,9 +1649,6 @@ function salvarSenhas(){
   setTimeout(()=>{document.getElementById('cfg-msg').textContent='';},3000);
 }
 
-// ══════════════════════════════════════════════
-// INIT TABELAS
-// ══════════════════════════════════════════════
 async function initTabelas(){
   const queries=[
     `alter table mesas add column if not exists pago_parcial numeric(10,2) default 0`,
@@ -1535,9 +1657,7 @@ async function initTabelas(){
     `create table if not exists anotacoes (id bigint generated always as identity primary key, titulo text, conteudo text, cor text, criado_em timestamptz default now())`,
     `create table if not exists comissoes (id bigint generated always as identity primary key, funcionario text, descricao text, valor numeric(10,2), pago boolean default false, criado_em timestamptz default now())`,
   ];
-  for(const q of queries){
-    await sb.rpc('exec_sql',{sql:q}).catch(()=>{});
-  }
+  for(const q of queries){await sb.rpc('exec_sql',{sql:q}).catch(()=>{});}
 }
 initTabelas();
 </script>
