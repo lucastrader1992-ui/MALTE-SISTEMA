@@ -127,7 +127,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 .mesa-status{font-size:10px;font-weight:500;}
 .mesa-total{font-size:11px;font-weight:600;color:var(--gold2);margin-top:3px;}
 
-.pay-methods{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-bottom:12px;}
+.pay-methods{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:7px;margin-bottom:12px;}
 .pay-btn{padding:9px;border-radius:var(--radius-sm);border:1px solid var(--border2);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:12px;font-weight:500;text-align:center;transition:all 0.2s;}
 .pay-btn.sel{border-color:var(--gold);color:var(--gold3);background:var(--goldl);}
 
@@ -470,11 +470,15 @@ async function renderCaixa(){
   <div class="caixa-status ${caixaAberto?'caixa-aberto':'caixa-fechado'}">
     <div>
       <div style="font-size:15px;font-weight:700">${caixaAberto?'🟢 Caixa Aberto':'🔴 Caixa Fechado'}</div>
-      ${caixaAberto?`<div style="font-size:12px;color:var(--text2);margin-top:3px">Aberto às ${fmtDateFull(caixaAberto.abertura)} | Troco: ${fmt(caixaAberto.troco)}</div>`:''}
+      ${caixaAberto?`<div style="font-size:12px;color:var(--text2);margin-top:3px">Aberto às ${fmtDateFull(caixaAberto.abertura)} | Troco: ${fmt(caixaAberto.troco)} | Operador: ${caixaAberto.operador}</div>`:''}
     </div>
-    ${caixaAberto
-      ?`<button class="btn btn-danger btn-sm" onclick="fecharCaixa()">Fechar Caixa</button>`
-      :`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
+    <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      ${caixaAberto
+        ?`<button class="btn btn-orange btn-sm" onclick="registrarSaidaCaixa()">💸 Saída</button>
+           <button class="btn btn-teal btn-sm" onclick="relatorioTurno()">📋 Relatório Turno</button>
+           <button class="btn btn-danger btn-sm" onclick="fecharCaixa()">Fechar Caixa</button>`
+        :`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
+    </div>
   </div>
 
   <!-- SELETOR DE DIA -->
@@ -483,7 +487,7 @@ async function renderCaixa(){
     <input type="date" id="caixa-data-sel" value="${dataHoje}" style="padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
     <button class="btn btn-primary btn-sm" onclick="carregarCaixaDia()">🔍 Ver</button>
     <button class="btn btn-secondary btn-sm" onclick="document.getElementById('caixa-data-sel').value='${dataHoje}';carregarCaixaDia()">📌 Hoje</button>
-    <button class="btn btn-secondary btn-sm" onclick="irDiaCaixaAnterior()">◀ Dia anterior</button>
+    <button class="btn btn-secondary btn-sm" onclick="irDiaCaixaAnterior()">◀ Anterior</button>
     <button class="btn btn-secondary btn-sm" onclick="irDiaCaixaProximo()">Próximo ▶</button>
   </div>
 
@@ -491,6 +495,54 @@ async function renderCaixa(){
     <div class="empty"><div class="spinner" style="margin:0 auto"></div></div>
   </div>`;
   await carregarCaixaDia();
+}
+
+function registrarSaidaCaixa(){
+  openModal(`<h3>💸 Registrar Saída de Caixa</h3>
+  <div style="font-size:12px;color:var(--text2);margin-bottom:14px">⚠️ Toda saída fica registrada com operador e horário.</div>
+  <div class="modal-field"><label>Valor (R$)</label><input type="number" id="saida-valor" value="0" step="0.01" min="0.01"></div>
+  <div class="modal-field"><label>Motivo / Observação</label>
+    <select id="saida-motivo-sel" onchange="toggleSaidaObs()" style="margin-bottom:7px;width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      <option value="">Selecionar motivo...</option>
+      <option value="Troco para cliente">Troco para cliente</option>
+      <option value="Pagamento de fornecedor">Pagamento de fornecedor</option>
+      <option value="Compra de emergência">Compra de emergência</option>
+      <option value="Despesa operacional">Despesa operacional</option>
+      <option value="Sangria">Sangria (retirada pelo ADM)</option>
+      <option value="Outro">Outro (especificar)</option>
+    </select>
+    <input type="text" id="saida-obs" placeholder="Detalhe o motivo..." style="display:none;width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+  </div>
+  <div class="modal-field"><label>Autorizado por</label>
+    <input type="text" id="saida-autor" placeholder="Nome de quem autorizou" value="${currentUser.nome}">
+  </div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-danger" onclick="confirmarSaidaCaixa()">Registrar Saída</button>
+  </div>`);
+}
+
+function toggleSaidaObs(){
+  const sel=document.getElementById('saida-motivo-sel');
+  const obs=document.getElementById('saida-obs');
+  if(sel&&obs)obs.style.display=sel.value==='Outro'?'block':'none';
+}
+
+async function confirmarSaidaCaixa(){
+  const valor=parseFloat(document.getElementById('saida-valor').value)||0;
+  if(valor<=0){alert('Informe um valor válido.');return;}
+  const motivoSel=document.getElementById('saida-motivo-sel').value;
+  const obs=document.getElementById('saida-obs').value.trim();
+  const motivo=motivoSel==='Outro'?obs:motivoSel;
+  if(!motivo){alert('Informe o motivo.');return;}
+  const autor=document.getElementById('saida-autor').value.trim()||currentUser.nome;
+  await sb.from('saidas_caixa').insert({
+    valor,motivo,autorizado_por:autor,operador:currentUser.nome
+  }).catch(()=>{});
+  await registrarLog('SAÍDA CAIXA',`R$ ${valor.toFixed(2)} — ${motivo} — Autorizado: ${autor}`);
+  closeModal();
+  alert(`✅ Saída de ${fmt(valor)} registrada!`);
+  carregarCaixaDia();
 }
 
 function irDiaCaixaAnterior(){
@@ -513,42 +565,84 @@ function irDiaCaixaProximo(){
 async function carregarCaixaDia(){
   const sel=document.getElementById('caixa-data-sel');
   const data=sel?sel.value:new Date().toISOString().split('T')[0];
-
-  // Dia comercial: data selecionada 06:00 → dia seguinte 05:59
   const tsInicio=new Date(`${data}T06:00:00`).toISOString();
   const dtFim=new Date(`${data}T06:00:00`);
-  dtFim.setDate(dtFim.getDate()+1);
-  dtFim.setHours(5,59,59,999);
+  dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);
   const tsFim=dtFim.toISOString();
 
-  const{data:V}=await sb.from('vendas').select('*')
-    .gte('criado_em',tsInicio).lte('criado_em',tsFim)
-    .order('criado_em',{ascending:false});
+  const [{data:V},{data:S},{data:L}]=await Promise.all([
+    sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('log_acoes').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}).limit(50)
+  ]);
 
   const vendas=V||[];
-  const total=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const saidas=S||[];
+  const logs=L||[];
+  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
+  const saldoFinal=totalVendas-totalSaidas;
   const porPag={};
   vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
 
   const dataFmt=new Date(`${data}T12:00:00`).toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});
   const isHoje=data===new Date().toISOString().split('T')[0];
-
   const el=document.getElementById('caixa-dia-conteudo');
   if(!el)return;
+
+  // Montar todas as formas de pagamento dinamicamente
+  const pagLabels={
+    'dinheiro':'💵 Dinheiro','pix':'📱 PIX','debito':'💳 Débito','credito':'💳 Crédito',
+    'pix+dinheiro':'📱+💵 PIX+Dinheiro','pix+debito':'📱+💳 PIX+Débito',
+    'pix+credito':'📱+💳 PIX+Crédito','dinheiro+debito':'💵+💳 Dinheiro+Débito',
+    'dinheiro+credito':'💵+💳 Dinheiro+Crédito','debito+credito':'💳 Déb+Créd'
+  };
+
   el.innerHTML=`
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-    <span style="font-size:14px;font-weight:600;color:var(--text)">${dataFmt}</span>
+    <span style="font-size:14px;font-weight:600">${dataFmt}</span>
     ${isHoje?'<span class="badge badge-green">HOJE</span>':'<span class="badge badge-blue">HISTÓRICO</span>'}
-    <span style="font-size:11px;color:var(--text3)">Dia comercial: 06:00 → 05:59 (+1d)</span>
+    <span style="font-size:11px;color:var(--text3)">dia comercial 06:00→05:59</span>
   </div>
+
+  <!-- CARDS RESUMO -->
   <div class="stats-grid">
-    <div class="stat-card stat-gold"><div class="stat-label">Total do Dia</div><div class="stat-value">${fmt(total)}</div><div class="stat-sub">${vendas.length} vendas</div></div>
+    <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalVendas)}</div><div class="stat-sub">${vendas.length} transações</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Saídas</div><div class="stat-value">${fmt(totalSaidas)}</div><div class="stat-sub">${saidas.length} retiradas</div></div>
+    <div class="stat-card ${saldoFinal>=0?'stat-green':'stat-red'}"><div class="stat-label">Saldo Final</div><div class="stat-value">${fmt(saldoFinal)}</div><div class="stat-sub">vendas − saídas</div></div>
     <div class="stat-card stat-green"><div class="stat-label">Dinheiro</div><div class="stat-value">${fmt(porPag['dinheiro']||0)}</div></div>
     <div class="stat-card stat-blue"><div class="stat-label">PIX</div><div class="stat-value">${fmt(porPag['pix']||0)}</div></div>
-    <div class="stat-card"><div class="stat-label">Débito</div><div class="stat-value" style="color:var(--purple)">${fmt(porPag['debito']||0)}</div></div>
-    <div class="stat-card"><div class="stat-label">Crédito</div><div class="stat-value" style="color:var(--teal)">${fmt(porPag['credito']||0)}</div></div>
-    <div class="stat-card"><div class="stat-label">Cartão Total</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
+    <div class="stat-card"><div class="stat-label">Cartões</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
   </div>
+
+  <!-- PAGAMENTOS COMBINADOS se houver -->
+  ${Object.entries(porPag).filter(([k])=>k.includes('+')).length>0?`
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:14px;">
+    <div style="font-size:12px;font-weight:600;color:var(--gold2);margin-bottom:8px">💳 Pagamentos Combinados</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${Object.entries(porPag).filter(([k])=>k.includes('+')).map(([k,v])=>`
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;">
+        <div style="color:var(--text2);font-size:10px">${pagLabels[k]||k.toUpperCase()}</div>
+        <div style="font-weight:700;color:var(--gold2)">${fmt(v)}</div>
+      </div>`).join('')}
+    </div>
+  </div>`:''}
+
+  <!-- SAÍDAS -->
+  ${saidas.length>0?`
+  <div class="section-hdr"><div class="section-title" style="color:var(--red)">💸 Saídas de Caixa</div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Horário</th><th>Motivo</th><th>Valor</th><th>Operador</th><th>Autorizado</th></tr></thead>
+    <tbody>${saidas.map(s=>`<tr>
+      <td>${fmtDateFull(s.criado_em)}</td>
+      <td>${s.motivo}</td>
+      <td style="font-weight:700;color:var(--red)">${fmt(s.valor)}</td>
+      <td>${s.operador}</td>
+      <td>${s.autorizado_por}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`:''}
+
+  <!-- VENDAS -->
   ${vendas.length===0
     ?`<div class="empty"><div class="empty-icon">📭</div><p>Nenhuma venda neste dia</p></div>`
     :`<div class="section-hdr"><div class="section-title">Vendas do Dia</div><span style="font-size:11px;color:var(--text2)">${vendas.length} transações</span></div>
@@ -557,11 +651,93 @@ async function carregarCaixaDia(){
       <tbody>${vendas.map(v=>`<tr>
         <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
         <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
-        <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
+        <td><span class="badge badge-blue" style="font-size:9px">${(pagLabels[v.pagamento]||v.pagamento||'').replace(/[💵📱💳+]/g,'').trim().toUpperCase()}</span></td>
         <td>${v.operador||''}</td>
         <td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
       </tr>`).join('')}</tbody>
-    </table></div>`}`;
+    </table></div>`}
+
+  <!-- LOG DE AÇÕES -->
+  ${logs.length>0?`
+  <div class="section-hdr" style="margin-top:6px">
+    <div class="section-title" style="color:var(--text2);font-size:12px">🔍 Log de Ações do Dia</div>
+    <span style="font-size:10px;color:var(--text3)">${logs.length} registros</span>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Horário</th><th>Operador</th><th>Ação</th><th>Detalhe</th></tr></thead>
+    <tbody>${logs.map(l=>`<tr>
+      <td style="font-size:11px">${fmtDateFull(l.criado_em)}</td>
+      <td style="font-size:11px;font-weight:600">${l.operador}</td>
+      <td><span class="badge ${l.acao.includes('SAÍDA')||l.acao.includes('CANCEL')?'badge-red':l.acao.includes('VENDA')||l.acao.includes('FECHA')?'badge-green':'badge-blue'}" style="font-size:9px">${l.acao}</span></td>
+      <td style="font-size:11px;color:var(--text2)">${l.detalhe||''}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`:''}`;
+}
+
+async function relatorioTurno(){
+  const data=new Date().toISOString().split('T')[0];
+  const tsInicio=new Date(`${data}T06:00:00`).toISOString();
+  const dtFim=new Date(`${data}T06:00:00`);
+  dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);
+  const tsFim=dtFim.toISOString();
+
+  const [{data:V},{data:S}]=await Promise.all([
+    sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim)
+  ]);
+
+  const vendas=V||[];const saidas=S||[];
+  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
+  const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  const agora=new Date().toLocaleString('pt-BR');
+
+  const html=`<div style="background:#fff;color:#000;padding:28px;font-family:'Courier New',monospace;font-size:12px;max-width:380px;margin:0 auto;" id="turno-pdf">
+    <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:10px;">
+      <div style="font-size:16px;font-weight:700">🍺 MALTE DISTRIBUIDORA</div>
+      <div style="font-size:11px">RELATÓRIO DE FECHAMENTO DE TURNO</div>
+      <div style="font-size:11px;margin-top:4px">${agora}</div>
+    </div>
+    <div style="margin-bottom:8px"><b>Operador:</b> ${currentUser.nome}</div>
+    ${caixaAberto?`<div><b>Abertura:</b> ${fmtDateFull(caixaAberto.abertura)}</div><div><b>Troco inicial:</b> ${fmt(caixaAberto.troco)}</div>`:''}
+    <div style="border-top:1px dashed #000;border-bottom:1px dashed #000;margin:10px 0;padding:8px 0;">
+      <div style="display:flex;justify-content:space-between"><span>Total Vendas:</span><span><b>${fmt(totalVendas)}</b></span></div>
+      <div style="display:flex;justify-content:space-between"><span>Saídas de Caixa:</span><span style="color:#c0392b"><b>- ${fmt(totalSaidas)}</b></span></div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:14px"><span><b>SALDO:</b></span><span><b>${fmt(totalVendas-totalSaidas)}</b></span></div>
+    </div>
+    <div style="margin-bottom:8px"><b>Por forma de pagamento:</b></div>
+    ${Object.entries(porPag).map(([k,v])=>`<div style="display:flex;justify-content:space-between"><span>${k.toUpperCase()}</span><span>${fmt(v)}</span></div>`).join('')}
+    ${saidas.length>0?`
+    <div style="border-top:1px dashed #000;margin:10px 0;padding-top:8px"><b>Saídas registradas:</b></div>
+    ${saidas.map(s=>`<div style="margin-bottom:4px;font-size:11px">• ${fmtDate(s.criado_em)} | ${s.motivo} | ${fmt(s.valor)} | Auth: ${s.autorizado_por}</div>`).join('')}`:''}
+    <div style="border-top:1px dashed #000;margin-top:10px;padding-top:10px;display:flex;justify-content:space-between">
+      <div style="text-align:center;flex:1">
+        <div style="border-top:1px solid #000;margin-top:40px;padding-top:4px;font-size:10px">Operador: ${currentUser.nome}</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="border-top:1px solid #000;margin-top:40px;padding-top:4px;font-size:10px">Conferência ADM</div>
+      </div>
+    </div>
+  </div>`;
+
+  openModal(`<h3>📋 Relatório de Turno</h3>
+  <div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">${html}</div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Fechar</button>
+    <button class="btn btn-primary" onclick="imprimirTurno()">🖨️ Imprimir / PDF</button>
+  </div>`);
+  window._turnoPdfHtml=html;
+}
+
+function imprimirTurno(){
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=window._turnoPdfHtml||'';
+  pa.style.display='block';window.print();
+  pa.style.display='none';pa.innerHTML='';
+}
+
+async function registrarLog(acao,detalhe){
+  await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe}).catch(()=>{});
 }
 
 function abrirCaixa(){
@@ -728,6 +904,12 @@ async function modalMesaAberta(id){
       <button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button>
       <button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button>
       <button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button>
+      <button class="pay-btn" id="pay-pix+dinheiro" onclick="selPay('pix+dinheiro')">📱+💵 PIX+Din</button>
+      <button class="pay-btn" id="pay-pix+debito" onclick="selPay('pix+debito')">📱+💳 PIX+Déb</button>
+      <button class="pay-btn" id="pay-pix+credito" onclick="selPay('pix+credito')">📱+💳 PIX+Cré</button>
+      <button class="pay-btn" id="pay-dinheiro+debito" onclick="selPay('dinheiro+debito')">💵+💳 Din+Déb</button>
+      <button class="pay-btn" id="pay-dinheiro+credito" onclick="selPay('dinheiro+credito')">💵+💳 Din+Cré</button>
+      <button class="pay-btn" id="pay-debito+credito" onclick="selPay('debito+credito')">💳 Déb+Cré</button>
     </div>
     <div style="display:flex;gap:7px;margin-bottom:7px;">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button>
@@ -758,6 +940,12 @@ function pagamentoParcial(mesaId,restante){
     <button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button>
     <button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button>
     <button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button>
+    <button class="pay-btn" id="pay-pix+dinheiro" onclick="selPay('pix+dinheiro')">📱+💵 PIX+Din</button>
+    <button class="pay-btn" id="pay-pix+debito" onclick="selPay('pix+debito')">📱+💳 PIX+Déb</button>
+    <button class="pay-btn" id="pay-pix+credito" onclick="selPay('pix+credito')">📱+💳 PIX+Cré</button>
+    <button class="pay-btn" id="pay-dinheiro+debito" onclick="selPay('dinheiro+debito')">💵+💳 Din+Déb</button>
+    <button class="pay-btn" id="pay-dinheiro+credito" onclick="selPay('dinheiro+credito')">💵+💳 Din+Cré</button>
+    <button class="pay-btn" id="pay-debito+credito" onclick="selPay('debito+credito')">💳 Déb+Cré</button>
   </div>
   <div class="modal-actions">
     <button class="btn btn-secondary" onclick="modalMesaAberta(${mesaId})">Voltar</button>
@@ -840,6 +1028,7 @@ async function fecharMesaVenda(id){
   for(const i of I){const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);}
   await sb.from('mesa_itens').delete().eq('mesa_id',id);
   await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
+  await registrarLog('FECHA MESA',`Mesa ${id} — ${fmt(totalFinal>0?totalFinal:totalBruto)} — ${payAtual}`);
   await verComprovante(venda.id);
   renderMesas();
 }
@@ -895,6 +1084,12 @@ async function renderBalcao(){
           <button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button>
           <button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button>
           <button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button>
+          <button class="pay-btn" id="pay-pix+dinheiro" onclick="selPay('pix+dinheiro')">📱+💵 PIX+Din</button>
+          <button class="pay-btn" id="pay-pix+debito" onclick="selPay('pix+debito')">📱+💳 PIX+Déb</button>
+          <button class="pay-btn" id="pay-pix+credito" onclick="selPay('pix+credito')">📱+💳 PIX+Cré</button>
+          <button class="pay-btn" id="pay-dinheiro+debito" onclick="selPay('dinheiro+debito')">💵+💳 Din+Déb</button>
+          <button class="pay-btn" id="pay-dinheiro+credito" onclick="selPay('dinheiro+credito')">💵+💳 Din+Cré</button>
+          <button class="pay-btn" id="pay-debito+credito" onclick="selPay('debito+credito')">💳 Déb+Cré</button>
         </div>
         <button class="btn btn-primary" style="width:100%" onclick="finalizarBalcao()">✓ Finalizar</button>
         <button class="btn btn-secondary" style="width:100%;margin-top:5px" onclick="balcaoItens=[];renderBalcao()">Limpar</button>`}
@@ -920,6 +1115,7 @@ async function finalizarBalcao(){
     await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
     for(const i of balcaoItens){const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);}
     balcaoItens=[];
+    await registrarLog('VENDA BALCÃO',`${fmt(total)} — ${payAtual}`);
     await verComprovante(venda.id);
   }
 }
@@ -1937,6 +2133,8 @@ async function initTabelas(){
     `create table if not exists tarefas (id bigint generated always as identity primary key, titulo text, descricao text, prioridade text default 'media', concluida boolean default false, criado_em timestamptz default now())`,
     `create table if not exists anotacoes (id bigint generated always as identity primary key, titulo text, conteudo text, cor text, criado_em timestamptz default now())`,
     `create table if not exists comissoes (id bigint generated always as identity primary key, funcionario text, descricao text, valor numeric(10,2), pago boolean default false, criado_em timestamptz default now())`,
+    `create table if not exists saidas_caixa (id bigint generated always as identity primary key, valor numeric(10,2), motivo text, autorizado_por text, operador text, criado_em timestamptz default now())`,
+    `create table if not exists log_acoes (id bigint generated always as identity primary key, operador text, acao text, detalhe text, criado_em timestamptz default now())`,
   ];
   for(const q of queries){await sb.rpc('exec_sql',{sql:q}).catch(()=>{});}
 }
