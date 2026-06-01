@@ -464,10 +464,8 @@ async function renderDashboard(){
 }
 
 async function renderCaixa(){
-  const{data:V}=await sb.from('vendas').select('*').order('criado_em',{ascending:false});
-  const hojeV=(V||[]).filter(v=>isHojeComercial(v.criado_em));
-  const totalHoje=hojeV.reduce((s,v)=>s+Number(v.total),0);
-  const porPag={};hojeV.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  const hoje=new Date();
+  const dataHoje=hoje.toISOString().split('T')[0];
   document.getElementById('tab-content').innerHTML=`
   <div class="caixa-status ${caixaAberto?'caixa-aberto':'caixa-fechado'}">
     <div>
@@ -478,23 +476,92 @@ async function renderCaixa(){
       ?`<button class="btn btn-danger btn-sm" onclick="fecharCaixa()">Fechar Caixa</button>`
       :`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}
   </div>
+
+  <!-- SELETOR DE DIA -->
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span style="font-size:13px;font-weight:600;color:var(--gold2)">📅 Consultar dia:</span>
+    <input type="date" id="caixa-data-sel" value="${dataHoje}" style="padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+    <button class="btn btn-primary btn-sm" onclick="carregarCaixaDia()">🔍 Ver</button>
+    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('caixa-data-sel').value='${dataHoje}';carregarCaixaDia()">📌 Hoje</button>
+    <button class="btn btn-secondary btn-sm" onclick="irDiaCaixaAnterior()">◀ Dia anterior</button>
+    <button class="btn btn-secondary btn-sm" onclick="irDiaCaixaProximo()">Próximo ▶</button>
+  </div>
+
+  <div id="caixa-dia-conteudo">
+    <div class="empty"><div class="spinner" style="margin:0 auto"></div></div>
+  </div>`;
+  await carregarCaixaDia();
+}
+
+function irDiaCaixaAnterior(){
+  const sel=document.getElementById('caixa-data-sel');
+  if(!sel)return;
+  const d=new Date(sel.value+'T12:00:00');
+  d.setDate(d.getDate()-1);
+  sel.value=d.toISOString().split('T')[0];
+  carregarCaixaDia();
+}
+function irDiaCaixaProximo(){
+  const sel=document.getElementById('caixa-data-sel');
+  if(!sel)return;
+  const d=new Date(sel.value+'T12:00:00');
+  d.setDate(d.getDate()+1);
+  sel.value=d.toISOString().split('T')[0];
+  carregarCaixaDia();
+}
+
+async function carregarCaixaDia(){
+  const sel=document.getElementById('caixa-data-sel');
+  const data=sel?sel.value:new Date().toISOString().split('T')[0];
+
+  // Dia comercial: data selecionada 06:00 → dia seguinte 05:59
+  const tsInicio=new Date(`${data}T06:00:00`).toISOString();
+  const dtFim=new Date(`${data}T06:00:00`);
+  dtFim.setDate(dtFim.getDate()+1);
+  dtFim.setHours(5,59,59,999);
+  const tsFim=dtFim.toISOString();
+
+  const{data:V}=await sb.from('vendas').select('*')
+    .gte('criado_em',tsInicio).lte('criado_em',tsFim)
+    .order('criado_em',{ascending:false});
+
+  const vendas=V||[];
+  const total=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const porPag={};
+  vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+
+  const dataFmt=new Date(`${data}T12:00:00`).toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});
+  const isHoje=data===new Date().toISOString().split('T')[0];
+
+  const el=document.getElementById('caixa-dia-conteudo');
+  if(!el)return;
+  el.innerHTML=`
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+    <span style="font-size:14px;font-weight:600;color:var(--text)">${dataFmt}</span>
+    ${isHoje?'<span class="badge badge-green">HOJE</span>':'<span class="badge badge-blue">HISTÓRICO</span>'}
+    <span style="font-size:11px;color:var(--text3)">Dia comercial: 06:00 → 05:59 (+1d)</span>
+  </div>
   <div class="stats-grid">
-    <div class="stat-card stat-gold"><div class="stat-label">Total do Dia</div><div class="stat-value">${fmt(totalHoje)}</div></div>
+    <div class="stat-card stat-gold"><div class="stat-label">Total do Dia</div><div class="stat-value">${fmt(total)}</div><div class="stat-sub">${vendas.length} vendas</div></div>
     <div class="stat-card stat-green"><div class="stat-label">Dinheiro</div><div class="stat-value">${fmt(porPag['dinheiro']||0)}</div></div>
     <div class="stat-card stat-blue"><div class="stat-label">PIX</div><div class="stat-value">${fmt(porPag['pix']||0)}</div></div>
-    <div class="stat-card"><div class="stat-label">Cartão</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
+    <div class="stat-card"><div class="stat-label">Débito</div><div class="stat-value" style="color:var(--purple)">${fmt(porPag['debito']||0)}</div></div>
+    <div class="stat-card"><div class="stat-label">Crédito</div><div class="stat-value" style="color:var(--teal)">${fmt(porPag['credito']||0)}</div></div>
+    <div class="stat-card"><div class="stat-label">Cartão Total</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
   </div>
-  <div class="section-hdr"><div class="section-title">Vendas de Hoje</div></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comprovante</th></tr></thead>
-    <tbody>${hojeV.map(v=>`<tr>
-      <td>${fmtDate(v.criado_em)}</td><td>${v.tipo}</td>
-      <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
-      <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
-      <td>${v.operador||''}</td>
-      <td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
-    </tr>`).join('')}</tbody>
-  </table></div>`;
+  ${vendas.length===0
+    ?`<div class="empty"><div class="empty-icon">📭</div><p>Nenhuma venda neste dia</p></div>`
+    :`<div class="section-hdr"><div class="section-title">Vendas do Dia</div><span style="font-size:11px;color:var(--text2)">${vendas.length} transações</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comprovante</th></tr></thead>
+      <tbody>${vendas.map(v=>`<tr>
+        <td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td>
+        <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
+        <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
+        <td>${v.operador||''}</td>
+        <td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
 }
 
 function abrirCaixa(){
@@ -910,9 +977,10 @@ async function renderProdutos(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div class="section-title">Produtos</div>
-    <div style="display:flex;gap:7px;">
+    <div style="display:flex;gap:7px;flex-wrap:wrap;">
       <button class="btn btn-orange btn-sm" onclick="gerenciarPromocoes()">🔥 Promoções</button>
       <button class="btn btn-teal btn-sm" onclick="sugestaoPreco()">💡 Sugestão Preço</button>
+      <button class="btn btn-secondary btn-sm" onclick="imprimirProdutos()">🖨️ Imprimir PDF</button>
       <button class="btn btn-primary btn-sm" onclick="pedirSenhaAdm('Adicionar produto',abrirNovoProduto)">+ Novo</button>
     </div>
   </div>
@@ -935,6 +1003,120 @@ async function renderProdutos(){
       </tr>`;
     }).join('')}</tbody>
   </table></div>`;
+}
+
+async function imprimirProdutos(){
+  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  const agora=new Date().toLocaleString('pt-BR');
+  const totalProdutos=(P||[]).length;
+  const baixoEstoque=(P||[]).filter(p=>p.estoque<20).length;
+  const semEstoque=(P||[]).filter(p=>p.estoque===0).length;
+
+  // Agrupar por categoria
+  const cats={};
+  (P||[]).forEach(p=>{
+    if(!cats[p.cat])cats[p.cat]=[];
+    cats[p.cat].push(p);
+  });
+
+  const html=`
+  <div style="background:#fff;color:#000;padding:30px;font-family:'Segoe UI',sans-serif;font-size:13px;" id="prod-pdf-area">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid #1a1e2e;padding-bottom:14px;">
+      <div>
+        <div style="font-size:22px;font-weight:700;color:#1a1e2e">🍺 Malte Distribuidora</div>
+        <div style="font-size:13px;color:#666;margin-top:3px">Relatório de Produtos</div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#888">
+        <div>Gerado em: ${agora}</div>
+        <div style="margin-top:3px">Total: <b>${totalProdutos} produtos</b></div>
+      </div>
+    </div>
+
+    <!-- RESUMO -->
+    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:100px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px">Total Produtos</div>
+        <div style="font-size:22px;font-weight:700;color:#1a1e2e">${totalProdutos}</div>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:100px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px">Estoque Baixo</div>
+        <div style="font-size:22px;font-weight:700;color:#e67e22">${baixoEstoque}</div>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:100px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px">Sem Estoque</div>
+        <div style="font-size:22px;font-weight:700;color:#c0392b">${semEstoque}</div>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:8px;padding:10px 16px;flex:1;min-width:100px;text-align:center;">
+        <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px">Categorias</div>
+        <div style="font-size:22px;font-weight:700;color:#2980b9">${Object.keys(cats).length}</div>
+      </div>
+    </div>
+
+    <!-- TABELA POR CATEGORIA -->
+    ${Object.entries(cats).map(([cat,prods])=>`
+    <div style="margin-bottom:20px;">
+      <div style="background:#1a1e2e;color:#f0c040;padding:7px 12px;font-size:12px;font-weight:700;border-radius:6px 6px 0 0;letter-spacing:1px;text-transform:uppercase;">${cat} (${prods.length})</div>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #eee;border-top:none;">
+        <thead>
+          <tr style="background:#f8f8f8;">
+            <th style="padding:7px 10px;text-align:left;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #ddd;">Produto</th>
+            <th style="padding:7px 10px;text-align:center;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #ddd;">Estoque</th>
+            <th style="padding:7px 10px;text-align:right;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #ddd;">Preço Compra</th>
+            <th style="padding:7px 10px;text-align:right;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #ddd;">Preço Venda</th>
+            <th style="padding:7px 10px;text-align:center;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #ddd;">Margem</th>
+            <th style="padding:7px 10px;text-align:center;font-size:11px;color:#555;font-weight:600;border-bottom:1px solid #ddd;">Promo</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${prods.map((p,i)=>{
+            const margem=p.preco>0?((p.preco-p.custo)/p.preco*100).toFixed(0):0;
+            const estoqueOk=p.estoque>=20;
+            const estoqueBaixo=p.estoque>0&&p.estoque<20;
+            const estoqueSem=p.estoque===0;
+            return`<tr style="background:${i%2===0?'#fff':'#fafafa'};">
+              <td style="padding:7px 10px;font-size:12px;font-weight:600;">${p.emoji} ${p.nome}</td>
+              <td style="padding:7px 10px;text-align:center;font-size:12px;">
+                <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;background:${estoqueSem?'#fde8e8':estoqueBaixo?'#fef3cd':'#d4edda'};color:${estoqueSem?'#c0392b':estoqueBaixo?'#856404':'#155724'};">${p.estoque}</span>
+              </td>
+              <td style="padding:7px 10px;text-align:right;font-size:12px;color:#c0392b;">${fmt(p.custo)}</td>
+              <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:700;color:#27ae60;">${fmt(p.preco)}</td>
+              <td style="padding:7px 10px;text-align:center;font-size:11px;">
+                <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-weight:700;background:${margem>=50?'#d4edda':margem>=30?'#fff3cd':'#fde8e8'};color:${margem>=50?'#155724':margem>=30?'#856404':'#c0392b'};">${margem}%</span>
+              </td>
+              <td style="padding:7px 10px;text-align:center;font-size:11px;">${p.em_promo?`<span style="background:#fde8e8;color:#c0392b;padding:2px 7px;border-radius:12px;font-weight:700;font-size:10px;">🔥 ${fmt(p.preco_promo)}</span>`:'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`).join('')}
+
+    <div style="border-top:1px solid #ddd;padding-top:10px;margin-top:10px;font-size:11px;color:#aaa;text-align:center;">
+      🍺 Malte Distribuidora — Sistema v4.1 — ${agora}
+    </div>
+  </div>`;
+
+  openModal(`
+  <h3>🖨️ Imprimir Lista de Produtos</h3>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:14px">${totalProdutos} produtos em ${Object.keys(cats).length} categorias</p>
+  <div style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
+    ${html}
+  </div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Fechar</button>
+    <button class="btn btn-primary" onclick="confirmarImprimirProdutos()">🖨️ Imprimir / Salvar PDF</button>
+  </div>`);
+
+  // Guardar o HTML para impressão
+  window._prodPdfHtml=html;
+}
+
+function confirmarImprimirProdutos(){
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=window._prodPdfHtml||'';
+  pa.style.display='block';
+  window.print();
+  pa.style.display='none';
+  pa.innerHTML='';
 }
 
 async function sugestaoPreco(){
