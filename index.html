@@ -1282,14 +1282,113 @@ async function renderCompras(){
     <button class="btn btn-primary btn-sm" onclick="novaCompra()">+ Nova Compra</button>
   </div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Fornecedor</th><th>Produto</th><th>Qtd</th><th>Total</th><th>Status</th></tr></thead>
-    <tbody>${(C||[]).length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma compra</td></tr>`:
+    <thead><tr><th>Data</th><th>Fornecedor</th><th>Produto</th><th>Qtd</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
+    <tbody>${(C||[]).length===0?`<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Nenhuma compra</td></tr>`:
     (C||[]).map(c=>`<tr>
       <td>${fmtDateFull(c.criado_em)}</td><td>${c.fornecedor}</td><td>${c.produto}</td><td>${c.qty}</td>
       <td style="font-weight:600;color:var(--red)">${fmt(c.valor_total)}</td>
-      <td><span class="badge ${c.status==='recebido'?'badge-green':c.status==='pendente'?'badge-gold':'badge-red'}">${c.status.toUpperCase()}</span></td>
+      <td>
+        <select onchange="alterarStatusCompra(${c.id},this.value,'${c.status}',${c.qty},'${c.produto}',${c.custo_unit||0})"
+          style="padding:4px 7px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:${c.status==='recebido'?'var(--green)':c.status==='pendente'?'var(--gold2)':'var(--red)'};font-size:11px;font-weight:600;cursor:pointer;">
+          <option value="pendente" ${c.status==='pendente'?'selected':''}>⏳ PENDENTE</option>
+          <option value="recebido" ${c.status==='recebido'?'selected':''}>✅ RECEBIDO</option>
+          <option value="cancelado" ${c.status==='cancelado'?'selected':''}>❌ CANCELADO</option>
+        </select>
+      </td>
+      <td><button class="btn btn-secondary btn-xs" onclick="editarCompra(${c.id})">✏️</button></td>
     </tr>`).join('')}</tbody>
   </table></div>`;
+}
+
+async function alterarStatusCompra(id, novoStatus, statusAtual, qty, produto, custoUnit){
+  if(novoStatus===statusAtual)return;
+
+  const msgs={
+    recebido:'Marcar como RECEBIDO? O estoque será atualizado automaticamente.',
+    cancelado:'Marcar como CANCELADO?',
+    pendente:'Voltar para PENDENTE?'
+  };
+  if(!confirm(msgs[novoStatus]||'Confirmar alteração?')){
+    renderCompras(); // resetar o select
+    return;
+  }
+
+  await sb.from('compras').update({status:novoStatus}).eq('id',id);
+
+  // Se mudou PARA recebido → atualiza estoque
+  if(novoStatus==='recebido' && statusAtual!=='recebido'){
+    const{data:prod}=await sb.from('produtos').select('*').eq('nome',produto).maybeSingle();
+    if(prod){
+      await sb.from('produtos').update({estoque:prod.estoque+qty,custo:custoUnit}).eq('id',prod.id);
+      await sb.from('entradas').insert({produto:prod.nome,qty,custo:qty*custoUnit,operador:currentUser.nome});
+    }
+  }
+  // Se mudou DE recebido → desconta estoque de volta
+  if(statusAtual==='recebido' && novoStatus!=='recebido'){
+    const{data:prod}=await sb.from('produtos').select('*').eq('nome',produto).maybeSingle();
+    if(prod){
+      await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+    }
+  }
+
+  renderCompras();
+}
+
+async function editarCompra(id){
+  const{data:c}=await sb.from('compras').select('*').eq('id',id).single();
+  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  openModal(`<h3>✏️ Editar Compra</h3>
+  <div class="modal-field"><label>Fornecedor</label><input type="text" id="ec-forn" value="${c.fornecedor}"></div>
+  <div class="modal-field"><label>Produto</label>
+    <select id="ec-prod">${(P||[]).map(p=>`<option value="${p.id}" data-custo="${p.custo}" ${p.nome===c.produto?'selected':''}>${p.emoji} ${p.nome}</option>`).join('')}</select>
+  </div>
+  <div class="modal-field"><label>Quantidade</label><input type="number" id="ec-qty" value="${c.qty}" min="1" oninput="calcTotalCompraEdit()"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <div class="modal-field"><label>Custo Unit. (R$)</label><input type="number" id="ec-custo-unit" value="${c.custo_unit||0}" step="0.01" oninput="calcTotalCompraEdit()"></div>
+    <div class="modal-field"><label>Total (R$)</label><input type="number" id="ec-total" value="${c.valor_total}" step="0.01" style="color:var(--gold2);font-weight:600"></div>
+  </div>
+  <div class="modal-field"><label>Status</label>
+    <select id="ec-status">
+      <option value="pendente" ${c.status==='pendente'?'selected':''}>⏳ Pendente</option>
+      <option value="recebido" ${c.status==='recebido'?'selected':''}>✅ Recebido</option>
+      <option value="cancelado" ${c.status==='cancelado'?'selected':''}>❌ Cancelado</option>
+    </select>
+  </div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="salvarEdicaoCompra(${id},'${c.status}',${c.qty},'${c.produto}')">Salvar</button>
+  </div>`);
+}
+
+function calcTotalCompraEdit(){
+  const q=parseInt(document.getElementById('ec-qty')?.value)||0;
+  const c=parseFloat(document.getElementById('ec-custo-unit')?.value)||0;
+  const t=document.getElementById('ec-total');
+  if(t)t.value=(q*c).toFixed(2);
+}
+
+async function salvarEdicaoCompra(id, statusAntigo, qtyAntigo, produtoAntigo){
+  const forn=document.getElementById('ec-forn').value.trim();if(!forn)return;
+  const pid=parseInt(document.getElementById('ec-prod').value);
+  const qty=parseInt(document.getElementById('ec-qty').value)||0;
+  const custo=parseFloat(document.getElementById('ec-custo-unit').value)||0;
+  const total=parseFloat(document.getElementById('ec-total').value)||0;
+  const novoStatus=document.getElementById('ec-status').value;
+  const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();
+
+  await sb.from('compras').update({fornecedor:forn,produto:prod.nome,qty,custo_unit:custo,valor_total:total,status:novoStatus}).eq('id',id);
+
+  // Se mudou PARA recebido → atualiza estoque
+  if(novoStatus==='recebido' && statusAntigo!=='recebido'){
+    await sb.from('produtos').update({estoque:prod.estoque+qty,custo}).eq('id',prod.id);
+    await sb.from('entradas').insert({produto:prod.nome,qty,custo:total,operador:currentUser.nome});
+  }
+  // Se mudou DE recebido → desconta estoque
+  if(statusAntigo==='recebido' && novoStatus!=='recebido'){
+    await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qtyAntigo)}).eq('id',prod.id);
+  }
+
+  closeModal();renderCompras();
 }
 async function novaCompra(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
