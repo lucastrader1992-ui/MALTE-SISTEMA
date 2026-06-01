@@ -394,6 +394,7 @@ function stopMesaPolling(){
 
 function goTab(tab){
   stopMesaPolling();
+  stopEstoquePolling();
   currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{
@@ -1233,7 +1234,11 @@ async function fecharMesaVenda(id){
   const totalFinal=totalBruto-pagoParcial;
   const{data:venda}=await sb.from('vendas').insert({tipo:`Mesa ${id}`,total:totalFinal>0?totalFinal:totalBruto,pagamento:payAtual,operador:currentUser.nome}).select().single();
   if(venda&&I.length>0)await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
-  for(const i of I){const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);}
+  for(const i of I){
+    const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();
+    if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);
+    await registrarSaidaEstoque(i.nome,i.qty,`Mesa ${id}`,currentUser.nome);
+  }
   await sb.from('mesa_itens').delete().eq('mesa_id',id);
   await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
   await registrarLog('FECHA MESA',`Mesa ${id} — ${fmt(totalFinal>0?totalFinal:totalBruto)} — ${payAtual}`);
@@ -1321,60 +1326,304 @@ async function finalizarBalcao(){
   const{data:venda}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
   if(venda){
     await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
-    for(const i of balcaoItens){const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);}
+    for(const i of balcaoItens){
+      const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();
+      if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);
+      await registrarSaidaEstoque(i.nome,i.qty,'Balcão',currentUser.nome);
+    }
     balcaoItens=[];
     await registrarLog('VENDA BALCÃO',`${fmt(total)} — ${payAtual}`);
     await verComprovante(venda.id);
   }
 }
 
+let estoquePollingInterval=null;
+function stopEstoquePolling(){if(estoquePollingInterval){clearInterval(estoquePollingInterval);estoquePollingInterval=null;}}
+
 async function renderEstoque(){
-  const[{data:P},{data:E}]=await Promise.all([
-    sb.from('produtos').select('*').order('nome'),
-    sb.from('entradas').select('*').order('criado_em',{ascending:false}).limit(30)
-  ]);
+  stopEstoquePolling();
+  const hoje=new Date().toISOString().split('T')[0];
+  const primMes=new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().split('T')[0];
+
   document.getElementById('tab-content').innerHTML=`
-  <div class="section-hdr"><div class="section-title">Controle de Estoque</div>
-    <button class="btn btn-primary btn-sm" onclick="abrirEntrada()">+ Entrada</button>
+  <div class="section-hdr">
+    <div><div class="section-title">📦 Controle de Estoque</div>
+    <div class="section-sub" id="estoque-ultima-atualizacao">Carregando...</div></div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <button class="btn btn-teal btn-sm" onclick="imprimirEstoque()">🖨️ PDF Estoque</button>
+      <button class="btn btn-primary btn-sm" onclick="abrirEntrada()">+ Entrada</button>
+    </div>
+  </div>
+
+  <!-- FILTRO HISTÓRICO -->
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:12px;font-weight:600;color:var(--gold2)">🔍 Filtrar histórico:</span>
+    <input type="date" id="est-filtro-ini" value="${primMes}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+    <span style="color:var(--text2);font-size:12px">até</span>
+    <input type="date" id="est-filtro-fim" value="${hoje}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+    <button class="btn btn-primary btn-sm" onclick="carregarHistoricoEstoque()">🔍 Filtrar</button>
+    <button class="btn btn-secondary btn-sm" onclick="
+      document.getElementById('est-filtro-ini').value='2020-01-01';
+      document.getElementById('est-filtro-fim').value='${hoje}';
+      carregarHistoricoEstoque()">📋 Tudo</button>
+    <button class="btn btn-teal btn-sm" onclick="imprimirHistoricoEstoque()">🖨️ PDF Histórico</button>
+  </div>
+
+  <!-- TABELA ESTOQUE ATUAL -->
+  <div id="estoque-tabela-wrap">
+    <div class="empty"><div class="spinner" style="margin:0 auto"></div></div>
+  </div>
+
+  <!-- HISTÓRICO ENTRADAS E SAÍDAS -->
+  <div id="estoque-historico-wrap">
+    <div class="empty"><div class="spinner" style="margin:0 auto"></div></div>
+  </div>`;
+
+  await atualizarTabelaEstoque();
+  await carregarHistoricoEstoque();
+
+  // Polling a cada 10s — sincroniza tablet, pc, celular
+  estoquePollingInterval=setInterval(async()=>{
+    if(currentTab!=='estoque')return stopEstoquePolling();
+    await atualizarTabelaEstoque();
+  },10000);
+}
+
+async function atualizarTabelaEstoque(){
+  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  const agora=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const wrap=document.getElementById('estoque-tabela-wrap');
+  const sub=document.getElementById('estoque-ultima-atualizacao');
+  if(sub)sub.textContent=`🔄 Última atualização: ${agora} — sincronizado com Supabase`;
+  if(!wrap)return;
+  const totalProd=(P||[]).length;
+  const baixo=(P||[]).filter(p=>p.estoque>0&&p.estoque<20).length;
+  const zerado=(P||[]).filter(p=>p.estoque===0).length;
+  wrap.innerHTML=`
+  <div class="stats-grid" style="margin-bottom:14px;">
+    <div class="stat-card"><div class="stat-label">Total Produtos</div><div class="stat-value" style="color:var(--gold2)">${totalProd}</div></div>
+    <div class="stat-card"><div class="stat-label">Estoque Baixo</div><div class="stat-value" style="color:var(--orange)">${baixo}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Zerados</div><div class="stat-value">${zerado}</div></div>
   </div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Produto</th><th>Cat</th><th>Estoque</th><th>Custo</th><th>Status</th></tr></thead>
+    <thead><tr><th>Produto</th><th>Cat</th><th>Estoque Atual</th><th>Custo Unit.</th><th>Valor em Estoque</th><th>Status</th></tr></thead>
     <tbody>${(P||[]).map(p=>`<tr>
-      <td>${p.emoji} ${p.nome}</td><td><span class="badge badge-blue">${p.cat}</span></td>
-      <td style="font-weight:600">${p.estoque}</td><td style="color:var(--text2)">${fmt(p.custo)}</td>
+      <td>${p.emoji} <b>${p.nome}</b></td>
+      <td><span class="badge badge-blue">${p.cat}</span></td>
+      <td style="font-weight:700;font-size:14px">${p.estoque}</td>
+      <td style="color:var(--text2)">${fmt(p.custo)}</td>
+      <td style="color:var(--gold2);font-weight:600">${fmt(p.custo*p.estoque)}</td>
       <td><span class="badge ${p.estoque===0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}">${p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK'}</span></td>
-    </tr>`).join('')}</tbody>
-  </table></div>
-  <div class="section-hdr"><div class="section-title">Histórico de Entradas</div></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Custo Total</th><th>Operador</th></tr></thead>
-    <tbody>${(E||[]).map(e=>`<tr>
-      <td>${fmtDateFull(e.criado_em)}</td><td>${e.produto}</td>
-      <td style="font-weight:600">${e.qty}</td><td style="color:var(--red)">${fmt(e.custo)}</td><td>${e.operador}</td>
-    </tr>`).join('')}</tbody>
+    </tr>`).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text3)">Nenhum produto</td></tr>'}
+    </tbody>
   </table></div>`;
 }
+
+async function carregarHistoricoEstoque(){
+  const ini=document.getElementById('est-filtro-ini')?.value||'2020-01-01';
+  const fim=document.getElementById('est-filtro-fim')?.value||new Date().toISOString().split('T')[0];
+  const tsIni=new Date(`${ini}T00:00:00`).toISOString();
+  const tsFim=new Date(`${fim}T23:59:59`).toISOString();
+
+  const [{data:E},{data:S}]=await Promise.all([
+    sb.from('entradas').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('saidas_estoque').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false})
+  ]);
+
+  const wrap=document.getElementById('estoque-historico-wrap');
+  if(!wrap)return;
+
+  const totalEntradas=(E||[]).reduce((s,e)=>s+e.qty,0);
+  const totalSaidas=(S||[]).reduce((s,x)=>s+x.qty,0);
+
+  wrap.innerHTML=`
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px;">
+    <!-- ENTRADAS -->
+    <div>
+      <div class="section-hdr">
+        <div><div class="section-title" style="color:var(--green)">📥 Entradas no Período</div>
+        <div class="section-sub">${(E||[]).length} registros | ${totalEntradas} unidades</div></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Data/Hora</th><th>Produto</th><th>Qtd</th><th>Custo</th><th>Operador</th></tr></thead>
+        <tbody>${(E||[]).length===0
+          ?'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:16px">Nenhuma entrada no período</td></tr>'
+          :(E||[]).map(e=>`<tr>
+            <td style="font-size:11px">${fmtDateFull(e.criado_em)}</td>
+            <td>${e.produto}</td>
+            <td style="font-weight:700;color:var(--green)">+${e.qty}</td>
+            <td style="color:var(--red)">${fmt(e.custo)}</td>
+            <td style="font-size:11px">${e.operador}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>
+    <!-- SAÍDAS -->
+    <div>
+      <div class="section-hdr">
+        <div><div class="section-title" style="color:var(--red)">📤 Saídas no Período</div>
+        <div class="section-sub">${(S||[]).length} registros | ${totalSaidas} unidades vendidas</div></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Data/Hora</th><th>Produto</th><th>Qtd</th><th>Origem</th><th>Operador</th></tr></thead>
+        <tbody>${(S||[]).length===0
+          ?'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:16px">Nenhuma saída no período</td></tr>'
+          :(S||[]).map(s=>`<tr>
+            <td style="font-size:11px">${fmtDateFull(s.criado_em)}</td>
+            <td>${s.produto}</td>
+            <td style="font-weight:700;color:var(--red)">-${s.qty}</td>
+            <td><span class="badge badge-blue" style="font-size:9px">${s.origem||'Venda'}</span></td>
+            <td style="font-size:11px">${s.operador||''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>
+  </div>`;
+}
+
 async function abrirEntrada(){
+  const hoje=new Date().toISOString().split('T')[0];
   const{data:P}=await sb.from('produtos').select('*').order('nome');
   openModal(`<h3>📦 Entrada de Estoque</h3>
+  <div class="modal-field"><label>📅 Data da Entrada</label>
+    <input type="date" id="ent-data" value="${hoje}" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+  </div>
   <div class="modal-field"><label>Produto</label>
-    <select id="ent-prod">${(P||[]).map(p=>`<option value="${p.id}">${p.emoji} ${p.nome}</option>`).join('')}</select>
+    <select id="ent-prod">${(P||[]).map(p=>`<option value="${p.id}">${p.emoji} ${p.nome} (estoque: ${p.estoque})</option>`).join('')}</select>
   </div>
   <div class="modal-field"><label>Quantidade</label><input type="number" id="ent-qty" value="12" min="1"></div>
   <div class="modal-field"><label>Custo Total (R$)</label><input type="number" id="ent-custo" value="0" step="0.01"></div>
+  <div class="modal-field"><label>Observação (opcional)</label><input type="text" id="ent-obs" placeholder="Ex: Compra do fornecedor João"></div>
   <div class="modal-actions">
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-    <button class="btn btn-primary" onclick="confirmarEntrada()">Registrar</button>
+    <button class="btn btn-primary" onclick="confirmarEntrada()">Registrar Entrada</button>
   </div>`);
 }
+
 async function confirmarEntrada(){
   const pid=parseInt(document.getElementById('ent-prod').value);
   const qty=parseInt(document.getElementById('ent-qty').value)||0;
   const custo=parseFloat(document.getElementById('ent-custo').value)||0;
+  const obs=document.getElementById('ent-obs')?.value?.trim()||'';
+  const dataEnt=document.getElementById('ent-data')?.value;
+  const tsEntrada=dataEnt?new Date(`${dataEnt}T${new Date().toTimeString().slice(0,8)}`).toISOString():new Date().toISOString();
   const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();
   await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);
-  await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome});
-  closeModal();renderEstoque();
+  await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome,observacao:obs,criado_em:tsEntrada});
+  await registrarLog('ENTRADA ESTOQUE',`${prod.nome} +${qty} un — ${fmt(custo)}`);
+  closeModal();
+  await atualizarTabelaEstoque();
+  await carregarHistoricoEstoque();
+}
+
+async function registrarSaidaEstoque(nomeProd,qty,origem,operador){
+  await sb.from('saidas_estoque').insert({
+    produto:nomeProd, qty, origem, operador
+  }).catch(()=>{});
+}
+
+async function imprimirEstoque(){
+  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  const agora=new Date().toLocaleString('pt-BR');
+  const totalValor=(P||[]).reduce((s,p)=>s+p.custo*p.estoque,0);
+  const html=`
+  <div style="background:#fff;color:#000;padding:28px;font-family:'Segoe UI',sans-serif;font-size:12px;">
+    <div style="display:flex;justify-content:space-between;border-bottom:2px solid #1a1e2e;padding-bottom:12px;margin-bottom:16px;">
+      <div><div style="font-size:20px;font-weight:700;color:#1a1e2e">🍺 Malte Distribuidora</div>
+      <div style="font-size:12px;color:#666">Relatório de Estoque Atual</div></div>
+      <div style="text-align:right;font-size:11px;color:#888">
+        <div>Gerado: ${agora}</div>
+        <div>Valor total em estoque: <b style="color:#2e7d32">R$ ${totalValor.toFixed(2).replace('.',',')}</b></div>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="background:#1a1e2e;">
+        <th style="padding:7px 10px;text-align:left;color:#f0c040;font-size:10px">Produto</th>
+        <th style="padding:7px 10px;text-align:center;color:#f0c040;font-size:10px">Categoria</th>
+        <th style="padding:7px 10px;text-align:center;color:#f0c040;font-size:10px">Estoque</th>
+        <th style="padding:7px 10px;text-align:right;color:#f0c040;font-size:10px">Custo Unit.</th>
+        <th style="padding:7px 10px;text-align:right;color:#f0c040;font-size:10px">Valor Total</th>
+        <th style="padding:7px 10px;text-align:center;color:#f0c040;font-size:10px">Status</th>
+      </tr></thead>
+      <tbody>
+      ${(P||[]).map((p,i)=>{
+        const bg=i%2===0?'#fff':'#f9f9f9';
+        const stCor=p.estoque===0?'#c62828':p.estoque<20?'#f57f17':'#2e7d32';
+        const stTxt=p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK';
+        return`<tr style="background:${bg}">
+          <td style="padding:6px 10px;font-weight:600">${p.emoji} ${p.nome}</td>
+          <td style="padding:6px 10px;text-align:center;font-size:10px">${p.cat}</td>
+          <td style="padding:6px 10px;text-align:center;font-weight:700;font-size:14px">${p.estoque}</td>
+          <td style="padding:6px 10px;text-align:right;color:#555">R$ ${p.custo.toFixed(2).replace('.',',')}</td>
+          <td style="padding:6px 10px;text-align:right;font-weight:600;color:#1565c0">R$ ${(p.custo*p.estoque).toFixed(2).replace('.',',')}</td>
+          <td style="padding:6px 10px;text-align:center"><span style="padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;background:${p.estoque===0?'#ffebee':p.estoque<20?'#fffde7':'#e8f5e9'};color:${stCor}">${stTxt}</span></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+      <tfoot><tr style="background:#1a1e2e">
+        <td colspan="4" style="padding:8px 10px;font-weight:700;color:#f0c040;font-size:11px">VALOR TOTAL EM ESTOQUE</td>
+        <td style="padding:8px 10px;text-align:right;font-weight:700;color:#f0c040;font-size:13px">R$ ${totalValor.toFixed(2).replace('.',',')}</td>
+        <td></td>
+      </tr></tfoot>
+    </table>
+    <div style="margin-top:14px;font-size:10px;color:#aaa;text-align:center">🍺 Malte Distribuidora — ${agora}</div>
+  </div>`;
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=html; pa.style.display='block';
+  window.print();
+  pa.style.display='none'; pa.innerHTML='';
+}
+
+async function imprimirHistoricoEstoque(){
+  const ini=document.getElementById('est-filtro-ini')?.value||'2020-01-01';
+  const fim=document.getElementById('est-filtro-fim')?.value||new Date().toISOString().split('T')[0];
+  const tsIni=new Date(`${ini}T00:00:00`).toISOString();
+  const tsFim=new Date(`${fim}T23:59:59`).toISOString();
+  const [{data:E},{data:S}]=await Promise.all([
+    sb.from('entradas').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('saidas_estoque').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false})
+  ]);
+  const agora=new Date().toLocaleString('pt-BR');
+  const totalEntQty=(E||[]).reduce((s,e)=>s+e.qty,0);
+  const totalSaiQty=(S||[]).reduce((s,x)=>s+x.qty,0);
+  const html=`
+  <div style="background:#fff;color:#000;padding:28px;font-family:'Segoe UI',sans-serif;font-size:12px;">
+    <div style="font-size:18px;font-weight:700;color:#1a1e2e;margin-bottom:4px">🍺 Malte Distribuidora — Histórico de Estoque</div>
+    <div style="font-size:11px;color:#666;margin-bottom:16px">Período: ${ini} a ${fim} | Gerado: ${agora}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div>
+        <div style="background:#2e7d32;color:#fff;padding:7px 12px;font-weight:700;font-size:11px;border-radius:6px 6px 0 0">📥 ENTRADAS (${totalEntQty} unidades)</div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #eee;">
+          <thead><tr style="background:#e8f5e9"><th style="padding:5px 8px;text-align:left;font-size:10px">Data</th><th style="font-size:10px;padding:5px">Produto</th><th style="font-size:10px;padding:5px">Qtd</th><th style="font-size:10px;padding:5px">Custo</th><th style="font-size:10px;padding:5px">Operador</th></tr></thead>
+          <tbody>${(E||[]).map((e,i)=>`<tr style="background:${i%2===0?'#fff':'#f9f9f9'}">
+            <td style="padding:4px 8px;font-size:10px">${fmtDateFull(e.criado_em)}</td>
+            <td style="padding:4px 8px;font-size:10px">${e.produto}</td>
+            <td style="padding:4px 8px;text-align:center;font-weight:700;color:#2e7d32">+${e.qty}</td>
+            <td style="padding:4px 8px;text-align:right;font-size:10px">R$ ${Number(e.custo).toFixed(2).replace('.',',')}</td>
+            <td style="padding:4px 8px;font-size:9px">${e.operador}</td>
+          </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:10px;color:#999">Nenhuma entrada</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div>
+        <div style="background:#c62828;color:#fff;padding:7px 12px;font-weight:700;font-size:11px;border-radius:6px 6px 0 0">📤 SAÍDAS (${totalSaiQty} unidades vendidas)</div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #eee;">
+          <thead><tr style="background:#ffebee"><th style="padding:5px 8px;text-align:left;font-size:10px">Data</th><th style="font-size:10px;padding:5px">Produto</th><th style="font-size:10px;padding:5px">Qtd</th><th style="font-size:10px;padding:5px">Origem</th><th style="font-size:10px;padding:5px">Operador</th></tr></thead>
+          <tbody>${(S||[]).map((s,i)=>`<tr style="background:${i%2===0?'#fff':'#f9f9f9'}">
+            <td style="padding:4px 8px;font-size:10px">${fmtDateFull(s.criado_em)}</td>
+            <td style="padding:4px 8px;font-size:10px">${s.produto}</td>
+            <td style="padding:4px 8px;text-align:center;font-weight:700;color:#c62828">-${s.qty}</td>
+            <td style="padding:4px 8px;font-size:9px">${s.origem||'Venda'}</td>
+            <td style="padding:4px 8px;font-size:9px">${s.operador||''}</td>
+          </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:10px;color:#999">Nenhuma saída</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    <div style="margin-top:14px;font-size:10px;color:#aaa;text-align:center">🍺 Malte Distribuidora — ${agora}</div>
+  </div>`;
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=html; pa.style.display='block';
+  window.print();
+  pa.style.display='none'; pa.innerHTML='';
 }
 
 async function renderProdutos(){
@@ -2342,6 +2591,7 @@ async function initTabelas(){
     `create table if not exists anotacoes (id bigint generated always as identity primary key, titulo text, conteudo text, cor text, criado_em timestamptz default now())`,
     `create table if not exists comissoes (id bigint generated always as identity primary key, funcionario text, descricao text, valor numeric(10,2), pago boolean default false, criado_em timestamptz default now())`,
     `create table if not exists saidas_caixa (id bigint generated always as identity primary key, valor numeric(10,2), motivo text, autorizado_por text, operador text, criado_em timestamptz default now())`,
+    `create table if not exists saidas_estoque (id bigint generated always as identity primary key, produto text, qty integer, origem text, operador text, criado_em timestamptz default now())`,
     `create table if not exists log_acoes (id bigint generated always as identity primary key, operador text, acao text, detalhe text, criado_em timestamptz default now())`,
   ];
   for(const q of queries){await sb.rpc('exec_sql',{sql:q}).catch(()=>{});}
