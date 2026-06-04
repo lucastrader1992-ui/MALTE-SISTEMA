@@ -465,6 +465,9 @@ async function renderDashboard(){
 }
 
 async function renderCaixa(){
+  // Sempre sincroniza com Supabase antes de renderizar
+  await carregarEstadoCaixa();
+
   const hoje=new Date();
   const dataHoje=hoje.toISOString().split('T')[0];
   document.getElementById('tab-content').innerHTML=`
@@ -830,19 +833,48 @@ async function confirmarImprimirAgora(){
   await gerarPdfFechamento(t,f,j,new Date().toISOString());
 }
 
+// ══════════════════════════════════════════════
+// CAIXA — sincronizado via Supabase (não localStorage)
+// ══════════════════════════════════════════════
+async function carregarEstadoCaixa(){
+  try{
+    const{data}=await sb.from('caixa_status').select('*').eq('id',1).maybeSingle();
+    if(data&&data.aberto){
+      caixaAberto={abertura:data.abertura,troco:data.troco,operador:data.operador};
+    }else{
+      caixaAberto=null;
+    }
+  }catch(e){
+    // Tabela pode não existir ainda — tenta criar
+    await sb.rpc('exec_sql',{sql:`create table if not exists caixa_status (id integer primary key default 1, aberto boolean default false, abertura timestamptz, troco numeric(10,2) default 0, operador text)`}).catch(()=>{});
+    caixaAberto=null;
+  }
+}
+
 function abrirCaixa(){
   openModal(`<h3>💰 Abrir Caixa</h3>
-  <div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div>
+  <div class="modal-field"><label>Troco Inicial (R$)</label>
+    <input type="number" id="troco-inicial" value="0" step="0.01" min="0">
+  </div>
   <div class="modal-actions">
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
     <button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button>
   </div>`);
 }
-function confirmarAbrirCaixa(){
+
+async function confirmarAbrirCaixa(){
   const troco=parseFloat(document.getElementById('troco-inicial').value)||0;
-  caixaAberto={abertura:new Date().toISOString(),troco,operador:currentUser.nome};
+  const agora=new Date().toISOString();
+  // Salva no Supabase — todos os dispositivos veem
+  await sb.from('caixa_status').upsert({
+    id:1, aberto:true, abertura:agora, troco, operador:currentUser.nome
+  });
+  caixaAberto={abertura:agora,troco,operador:currentUser.nome};
+  // Mantém localStorage como backup
   localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));
-  closeModal();renderCaixa();
+  await registrarLog('ABRE CAIXA',`Troco: ${fmt(troco)} — ${currentUser.nome}`);
+  closeModal();
+  renderCaixa();
 }
 function fecharCaixa(){
   openModal(`<h3>🔒 Fechar Caixa</h3>
@@ -915,18 +947,22 @@ async function confirmarFecharCaixa(){
     await registrarLog('SAÍDA FECHAMENTO',`${fmt(valor)} — ${motivo}`);
   }
 
-  // Verificar quais PDFs imprimir
   const impTurno=document.getElementById('pdf-turno')?.checked;
   const impFechamento=document.getElementById('pdf-fechamento')?.checked;
   const impJuntos=document.getElementById('pdf-juntos')?.checked;
 
-  // Fechar caixa
   const horaFechamento=new Date().toISOString();
   await registrarLog('FECHA CAIXA',`Operador: ${currentUser.nome}`);
-  caixaAberto=null;localStorage.removeItem('malte_caixa');
+
+  // Salva fechamento no Supabase — sincroniza TODOS os dispositivos
+  await sb.from('caixa_status').upsert({
+    id:1, aberto:false, abertura:null, troco:0, operador:currentUser.nome
+  }).catch(()=>{});
+
+  caixaAberto=null;
+  localStorage.removeItem('malte_caixa');
   closeModal();
 
-  // Gerar PDF(s)
   if(impTurno||impFechamento){
     await gerarPdfFechamento(impTurno,impFechamento,impJuntos,horaFechamento);
   }
@@ -2881,8 +2917,12 @@ async function initTabelas(){
     `create table if not exists saidas_caixa (id bigint generated always as identity primary key, valor numeric(10,2), motivo text, autorizado_por text, operador text, criado_em timestamptz default now())`,
     `create table if not exists saidas_estoque (id bigint generated always as identity primary key, produto text, qty integer, origem text, operador text, criado_em timestamptz default now())`,
     `create table if not exists log_acoes (id bigint generated always as identity primary key, operador text, acao text, detalhe text, criado_em timestamptz default now())`,
+    `create table if not exists caixa_status (id integer primary key default 1, aberto boolean default false, abertura timestamptz, troco numeric(10,2) default 0, operador text)`,
+    `insert into caixa_status (id,aberto) values (1,false) on conflict (id) do nothing`,
   ];
   for(const q of queries){await sb.rpc('exec_sql',{sql:q}).catch(()=>{});}
+  // Carrega estado do caixa do Supabase após criar tabelas
+  await carregarEstadoCaixa();
 }
 initTabelas();
 </script>
