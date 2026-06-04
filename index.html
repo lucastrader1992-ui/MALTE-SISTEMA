@@ -739,36 +739,59 @@ function imprimirTurno(){
 }
 
 async function excluirVenda(vendaId, tipo){
-  if(!confirm(`⚠️ Excluir a venda "${tipo}"?\n\nOs produtos serão devolvidos ao estoque automaticamente.\n\nEssa ação não pode ser desfeita.`))return;
+  if(!confirm(`⚠️ Excluir a venda "${tipo}"?\n\nOs produtos serão devolvidos ao estoque.\n\nEssa ação não pode ser desfeita.`))return;
 
   try{
+    // Buscar itens da venda
     const{data:itens}=await sb.from('venda_itens').select('*').eq('venda_id',vendaId);
     const I=itens||[];
+
+    // Buscar todos os produtos uma vez
     const{data:todosProds}=await sb.from('produtos').select('*');
     const P=todosProds||[];
 
-    // Estornar estoque — devolver produtos
-    for(const i of I){
-      // Tenta achar o produto pelo nome (remove emoji do inicio)
-      const nomeSimples=i.nome.replace(/^\S+\s/,'').trim();
-      const prod=P.find(p=>i.nome.includes(p.nome)||p.nome.includes(nomeSimples));
+    // Estornar estoque de cada item
+    for(const item of I){
+      // Limpa emoji e espaços do nome para comparar
+      const nomeLimpo=item.nome.replace(/[\u{1F300}-\u{1FFFF}]/gu,'').replace(/[\u2600-\u27FF]/g,'').trim();
+      // Tenta varios métodos de match
+      let prod=P.find(p=>p.nome===item.nome)
+             ||P.find(p=>item.nome.includes(p.nome))
+             ||P.find(p=>p.nome.includes(nomeLimpo))
+             ||P.find(p=>nomeLimpo.includes(p.nome))
+             ||P.find(p=>p.nome.toLowerCase()===nomeLimpo.toLowerCase());
+
       if(prod){
-        await sb.from('produtos').update({estoque:prod.estoque+i.qty}).eq('id',prod.id);
+        const novoEstoque=prod.estoque+item.qty;
+        await sb.from('produtos').update({estoque:novoEstoque}).eq('id',prod.id);
+        // Atualiza localmente para não somar errado se mesmo produto aparecer 2x
+        prod.estoque=novoEstoque;
       }
     }
 
+    // Deletar itens e venda
     await sb.from('venda_itens').delete().eq('venda_id',vendaId);
     await sb.from('vendas').delete().eq('id',vendaId);
-    await registrarLog('EXCLUIU VENDA',`ID ${vendaId} — ${tipo} — estoque estornado — ADM: ${currentUser.nome}`);
+    await registrarLog('EXCLUIU VENDA',`ID ${vendaId} — ${tipo} — ADM: ${currentUser.nome}`);
 
-    alert(`✅ Venda excluída!\nEstoque dos ${I.length} produto(s) foi restaurado.`);
+    alert(`✅ Venda excluída com sucesso!\n${I.length} produto(s) devolvidos ao estoque.`);
 
+    // Recarregar tela atual
     if(currentTab==='caixa') carregarCaixaDia();
     else if(currentTab==='relatorios') aplicarFiltroRelatorio();
 
   }catch(e){
     console.error('Erro ao excluir venda:',e);
-    alert('Erro ao excluir. Tente novamente.');
+    // Tenta excluir a venda mesmo sem estornar se o erro foi no estoque
+    try{
+      await sb.from('venda_itens').delete().eq('venda_id',vendaId);
+      await sb.from('vendas').delete().eq('id',vendaId);
+      alert('⚠️ Venda excluída mas não foi possível estornar o estoque automaticamente.\nAjuste o estoque manualmente em Produtos.');
+      if(currentTab==='caixa') carregarCaixaDia();
+      else if(currentTab==='relatorios') aplicarFiltroRelatorio();
+    }catch(e2){
+      alert('Erro ao excluir. Verifique sua conexão e tente novamente.');
+    }
   }
 }
 async function registrarLog(acao,detalhe){
