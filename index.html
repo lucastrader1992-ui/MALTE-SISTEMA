@@ -772,6 +772,7 @@ async function excluirVenda(vendaId, tipo){
     alert('Erro ao excluir. Tente novamente.');
   }
 }
+async function registrarLog(acao,detalhe){
   await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe}).catch(()=>{});
 }
 
