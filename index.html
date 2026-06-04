@@ -655,7 +655,7 @@ async function carregarCaixaDia(){
         <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
         <td><span class="badge badge-blue" style="font-size:9px">${(pagLabels[v.pagamento]||v.pagamento||'').replace(/[💵📱💳+]/g,'').trim().toUpperCase()}</span></td>
         <td>${v.operador||''}</td>
-        <td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
+        <td style="display:flex;gap:3px;"><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir venda — senha ADM',()=>excluirVenda(${v.id},'${v.tipo}'))">🗑️</button></td>
       </tr>`).join('')}</tbody>
     </table></div>`}
 
@@ -738,7 +738,40 @@ function imprimirTurno(){
   pa.style.display='none';pa.innerHTML='';
 }
 
-async function registrarLog(acao,detalhe){
+async function excluirVenda(vendaId, tipo){
+  if(!confirm(`Excluir a venda "${tipo}"? O estoque será restaurado automaticamente.`))return;
+
+  try{
+    // Buscar itens da venda para estornar estoque
+    const{data:itens}=await sb.from('venda_itens').select('*').eq('venda_id',vendaId);
+    const I=itens||[];
+
+    // Estornar estoque — devolver produtos
+    for(const i of I){
+      const{data:P}=await sb.from('produtos').select('*').order('nome');
+      const prod=(P||[]).find(p=>i.nome.includes(p.nome));
+      if(prod){
+        await sb.from('produtos').update({estoque:prod.estoque+i.qty}).eq('id',prod.id);
+      }
+    }
+
+    // Deletar itens da venda
+    await sb.from('venda_itens').delete().eq('venda_id',vendaId);
+    // Deletar a venda
+    await sb.from('vendas').delete().eq('id',vendaId);
+    await registrarLog('EXCLUIU VENDA',`ID ${vendaId} — ${tipo} — estoque estornado`);
+
+    alert('✅ Venda excluída e estoque restaurado!');
+
+    // Recarregar a tela atual
+    if(currentTab==='caixa') carregarCaixaDia();
+    else if(currentTab==='relatorios') aplicarFiltroRelatorio();
+
+  }catch(e){
+    console.error('Erro ao excluir venda:',e);
+    alert('Erro ao excluir. Tente novamente.');
+  }
+}
   await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe}).catch(()=>{});
 }
 
@@ -1226,24 +1259,62 @@ async function removerItemMesa(itemId,mesaId){
 }
 
 async function fecharMesaVenda(id){
-  const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();
-  const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);
-  const I=itens||[];
-  const totalBruto=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
-  const pagoParcial=m.pago_parcial||0;
-  const totalFinal=totalBruto-pagoParcial;
-  const{data:venda}=await sb.from('vendas').insert({tipo:`Mesa ${id}`,total:totalFinal>0?totalFinal:totalBruto,pagamento:payAtual,operador:currentUser.nome}).select().single();
-  if(venda&&I.length>0)await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
-  for(const i of I){
-    const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();
-    if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);
-    await registrarSaidaEstoque(i.nome,i.qty,`Mesa ${id}`,currentUser.nome);
+  // TRAVA anti-duplo-clique
+  if(window._fechandoMesa){return;}
+  window._fechandoMesa=true;
+
+  // Desabilita o botão visualmente
+  const btnFechar=document.querySelector(`button[onclick="fecharMesaVenda(${id})"]`);
+  if(btnFechar){btnFechar.disabled=true;btnFechar.textContent='⏳ Fechando...';}
+
+  try{
+    // Verifica se mesa ainda está ocupada antes de fechar
+    const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();
+    if(!m||m.status!=='ocupada'){
+      closeModal();renderMesas();
+      window._fechandoMesa=false;
+      return;
+    }
+    const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);
+    const I=itens||[];
+    if(I.length===0){
+      await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
+      closeModal();renderMesas();
+      window._fechandoMesa=false;
+      return;
+    }
+    const totalBruto=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
+    const pagoParcial=m.pago_parcial||0;
+    const totalFinal=totalBruto-pagoParcial;
+
+    // Marca mesa como processando ANTES de inserir venda — evita duplo clique
+    await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
+
+    const{data:venda}=await sb.from('vendas').insert({
+      tipo:`Mesa ${id}`,
+      total:totalFinal>0?totalFinal:totalBruto,
+      pagamento:payAtual,
+      operador:currentUser.nome
+    }).select().single();
+
+    if(venda&&I.length>0){
+      await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
+    }
+    for(const i of I){
+      const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();
+      if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);
+      await registrarSaidaEstoque(i.nome,i.qty,`Mesa ${id}`,currentUser.nome);
+    }
+    await sb.from('mesa_itens').delete().eq('mesa_id',id);
+    await registrarLog('FECHA MESA',`Mesa ${id} — ${fmt(totalFinal>0?totalFinal:totalBruto)} — ${payAtual}`);
+    await verComprovante(venda.id);
+    renderMesas();
+  }catch(e){
+    console.error('Erro ao fechar mesa:',e);
+    alert('Erro ao fechar mesa. Tente novamente.');
+  }finally{
+    window._fechandoMesa=false;
   }
-  await sb.from('mesa_itens').delete().eq('mesa_id',id);
-  await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
-  await registrarLog('FECHA MESA',`Mesa ${id} — ${fmt(totalFinal>0?totalFinal:totalBruto)} — ${payAtual}`);
-  await verComprovante(venda.id);
-  renderMesas();
 }
 async function cancelarMesa(id){
   await sb.from('mesa_itens').delete().eq('mesa_id',id);
@@ -2658,7 +2729,7 @@ async function aplicarFiltroRelatorio(){
       <td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td>
       <td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td>
       <td>${v.operador||''}</td>
-      <td class="no-print"><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td>
+      <td class="no-print" style="display:flex;gap:3px;"><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir venda — senha ADM',()=>excluirVenda(${v.id},'${v.tipo}'))">🗑️</button></td>
     </tr>`).join('')||`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma venda no período selecionado</td></tr>`}</tbody>
   </table></div>`;
 }
