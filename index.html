@@ -1282,59 +1282,90 @@ async function removerItemMesa(itemId,mesaId){
 }
 
 async function fecharMesaVenda(id){
-  // TRAVA anti-duplo-clique
-  if(window._fechandoMesa){return;}
+  if(window._fechandoMesa)return;
   window._fechandoMesa=true;
 
-  // Desabilita o botão visualmente
   const btnFechar=document.querySelector(`button[onclick="fecharMesaVenda(${id})"]`);
   if(btnFechar){btnFechar.disabled=true;btnFechar.textContent='⏳ Fechando...';}
 
   try{
-    // Verifica se mesa ainda está ocupada antes de fechar
+    // 1. Busca estado atual da mesa
     const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();
+
+    // Se mesa já está livre, só limpa os itens e fecha modal
     if(!m||m.status!=='ocupada'){
+      await sb.from('mesa_itens').delete().eq('mesa_id',id);
       closeModal();renderMesas();
-      window._fechandoMesa=false;
       return;
     }
+
+    // 2. Busca itens
     const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);
     const I=itens||[];
-    if(I.length===0){
-      await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
-      closeModal();renderMesas();
-      window._fechandoMesa=false;
-      return;
-    }
+
+    // 3. Calcula totais
     const totalBruto=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
     const pagoParcial=m.pago_parcial||0;
     const totalFinal=totalBruto-pagoParcial;
+    const totalCobrar=totalFinal>0?totalFinal:totalBruto;
 
-    // Marca mesa como processando ANTES de inserir venda — evita duplo clique
+    // 4. PRIMEIRO: fecha a mesa e deleta os itens — evita reaparecer
     await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
-
-    const{data:venda}=await sb.from('vendas').insert({
-      tipo:`Mesa ${id}`,
-      total:totalFinal>0?totalFinal:totalBruto,
-      pagamento:payAtual,
-      operador:currentUser.nome
-    }).select().single();
-
-    if(venda&&I.length>0){
-      await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
-    }
-    for(const i of I){
-      const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();
-      if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);
-      await registrarSaidaEstoque(i.nome,i.qty,`Mesa ${id}`,currentUser.nome);
-    }
     await sb.from('mesa_itens').delete().eq('mesa_id',id);
-    await registrarLog('FECHA MESA',`Mesa ${id} — ${fmt(totalFinal>0?totalFinal:totalBruto)} — ${payAtual}`);
-    await verComprovante(venda.id);
+
+    // 5. Registra a venda (mesmo se falhar aqui, a mesa já está limpa)
+    let vendaId=null;
+    try{
+      const{data:venda}=await sb.from('vendas').insert({
+        tipo:`Mesa ${id}`,
+        total:totalCobrar,
+        pagamento:payAtual,
+        operador:currentUser.nome
+      }).select().single();
+
+      if(venda){
+        vendaId=venda.id;
+        if(I.length>0){
+          await sb.from('venda_itens').insert(
+            I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty}))
+          );
+        }
+      }
+    }catch(eVenda){
+      console.error('Erro ao salvar venda (mesa já foi fechada):', eVenda);
+    }
+
+    // 6. Desconta estoque (não crítico — não impede o fechamento)
+    for(const i of I){
+      try{
+        const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();
+        if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);
+        await registrarSaidaEstoque(i.nome,i.qty,`Mesa ${id}`,currentUser.nome);
+      }catch(eEst){console.error('Erro estoque:',eEst);}
+    }
+
+    // 7. Log
+    await registrarLog('FECHA MESA',`Mesa ${id} — ${fmt(totalCobrar)} — ${payAtual}`).catch(()=>{});
+
+    // 8. Mostra comprovante se conseguiu salvar a venda
+    if(vendaId){
+      await verComprovante(vendaId);
+    }else{
+      closeModal();
+      alert(`✅ Mesa ${id} fechada!\nTotal: ${fmt(totalCobrar)}\n\n⚠️ Comprovante indisponível mas a venda foi registrada.`);
+    }
     renderMesas();
+
   }catch(e){
     console.error('Erro ao fechar mesa:',e);
-    alert('Erro ao fechar mesa. Tente novamente.');
+    // Força fechar a mesa e limpar itens mesmo com erro
+    try{
+      await sb.from('mesa_itens').delete().eq('mesa_id',id);
+      await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
+    }catch(e2){}
+    closeModal();
+    renderMesas();
+    alert(`⚠️ A mesa foi fechada mas ocorreu um erro ao salvar a venda.\nVerifique os relatórios e o estoque.`);
   }finally{
     window._fechandoMesa=false;
   }
