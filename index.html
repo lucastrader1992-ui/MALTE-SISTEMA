@@ -739,31 +739,30 @@ function imprimirTurno(){
 }
 
 async function excluirVenda(vendaId, tipo){
-  if(!confirm(`Excluir a venda "${tipo}"? O estoque será restaurado automaticamente.`))return;
+  if(!confirm(`⚠️ Excluir a venda "${tipo}"?\n\nOs produtos serão devolvidos ao estoque automaticamente.\n\nEssa ação não pode ser desfeita.`))return;
 
   try{
-    // Buscar itens da venda para estornar estoque
     const{data:itens}=await sb.from('venda_itens').select('*').eq('venda_id',vendaId);
     const I=itens||[];
+    const{data:todosProds}=await sb.from('produtos').select('*');
+    const P=todosProds||[];
 
     // Estornar estoque — devolver produtos
     for(const i of I){
-      const{data:P}=await sb.from('produtos').select('*').order('nome');
-      const prod=(P||[]).find(p=>i.nome.includes(p.nome));
+      // Tenta achar o produto pelo nome (remove emoji do inicio)
+      const nomeSimples=i.nome.replace(/^\S+\s/,'').trim();
+      const prod=P.find(p=>i.nome.includes(p.nome)||p.nome.includes(nomeSimples));
       if(prod){
         await sb.from('produtos').update({estoque:prod.estoque+i.qty}).eq('id',prod.id);
       }
     }
 
-    // Deletar itens da venda
     await sb.from('venda_itens').delete().eq('venda_id',vendaId);
-    // Deletar a venda
     await sb.from('vendas').delete().eq('id',vendaId);
-    await registrarLog('EXCLUIU VENDA',`ID ${vendaId} — ${tipo} — estoque estornado`);
+    await registrarLog('EXCLUIU VENDA',`ID ${vendaId} — ${tipo} — estoque estornado — ADM: ${currentUser.nome}`);
 
-    alert('✅ Venda excluída e estoque restaurado!');
+    alert(`✅ Venda excluída!\nEstoque dos ${I.length} produto(s) foi restaurado.`);
 
-    // Recarregar a tela atual
     if(currentTab==='caixa') carregarCaixaDia();
     else if(currentTab==='relatorios') aplicarFiltroRelatorio();
 
@@ -1394,18 +1393,30 @@ function qtyBalcao(idx,d){
 }
 async function finalizarBalcao(){
   if(!balcaoItens.length)return;
-  const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
-  const{data:venda}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
-  if(venda){
-    await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
-    for(const i of balcaoItens){
-      const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();
-      if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);
-      await registrarSaidaEstoque(i.nome,i.qty,'Balcão',currentUser.nome);
+  if(window._finalizandoBalcao)return;
+  window._finalizandoBalcao=true;
+  const btn=document.querySelector('button[onclick="finalizarBalcao()"]');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Finalizando...';}
+  try{
+    const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
+    const{data:venda}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
+    if(venda){
+      await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
+      for(const i of balcaoItens){
+        const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();
+        if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);
+        await registrarSaidaEstoque(i.nome,i.qty,'Balcão',currentUser.nome);
+      }
+      balcaoItens=[];
+      await registrarLog('VENDA BALCÃO',`${fmt(total)} — ${payAtual}`);
+      await verComprovante(venda.id);
     }
-    balcaoItens=[];
-    await registrarLog('VENDA BALCÃO',`${fmt(total)} — ${payAtual}`);
-    await verComprovante(venda.id);
+  }catch(e){
+    console.error('Erro ao finalizar balcão:',e);
+    alert('Erro ao finalizar. Tente novamente.');
+    if(btn){btn.disabled=false;btn.textContent='✓ Finalizar';}
+  }finally{
+    window._finalizandoBalcao=false;
   }
 }
 
