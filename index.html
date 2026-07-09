@@ -395,7 +395,7 @@ async function carregarCaixaDia(){
           <td style="color:var(--text2)">${fmt(p.custo_unit)}</td>
           <td style="font-weight:600;color:var(--red)">${fmt(p.custo_total)}</td>
           <td style="font-size:11px">${p.operador||''}</td>
-          <td><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir perda',()=>excluirPerda(${p.id},'${p.produto.replace(/'/g,"\'")}',${p.qty},${p.criado_em?`'`+p.criado_em+`'`:'null'}))">&#10005;</button></td>
+          <td><button class="btn btn-danger btn-xs" o<button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir perda',()=>excluirPerda(${p.id},${p.qty}))">&#10005;</button></td>
         </tr>`).join('')}</tbody>
       </table></div>`}
   </div>
@@ -1086,7 +1086,8 @@ function salvarSenhas(){const adm=document.getElementById('cfg-senha-adm').value
 // 🔴 PERDAS — Registrar no Caixa
 // ══════════════════════════════════════════════
 async function registrarPerda(){
-  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  let P=[];
+  try{const{data}=await sb.from('produtos').select('*').order('nome');P=data||[];}catch(e){alert('Erro ao carregar produtos: '+e.message);return;}
   openModal(`<h3 style="color:var(--red)">&#128465; Registrar Perda</h3>
   <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--redl);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius-sm);padding:10px;">
     &#9888; A quantidade será <b style="color:var(--red)">descontada automaticamente</b> do estoque.
@@ -1196,13 +1197,17 @@ async function confirmarPerda(){
   }
 }
 
-async function excluirPerda(id,produto,qty,criado_em){
+async function excluirPerda(id,qty){
   try{
-    // Estorna ao estoque
-    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod)await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
+    // Buscar a perda pelo id para pegar produto
+    const{data:perda}=await sb.from('perdas').select('*').eq('id',id).single();
+    if(perda){
+      // Estorna ao estoque
+      const{data:prod}=await sb.from('produtos').select('*').ilike('nome',perda.produto).maybeSingle();
+      if(prod)await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
+      try{await registrarLog('EXCLUIU PERDA',`${perda.produto} +${qty} un (estorno)`);}catch(e){}
+    }
     await sb.from('perdas').delete().eq('id',id);
-    try{await registrarLog('EXCLUIU PERDA',`${produto} +${qty} un (estorno)`);}catch(e){}
     alert('✅ Perda excluída. Estoque restaurado.');
     carregarCaixaDia();
   }catch(e){alert('Erro ao excluir perda: '+e.message);}
