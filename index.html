@@ -351,12 +351,16 @@ async function carregarEstadoCaixa(){
 async function carregarCaixaDia(){
   const sel=document.getElementById('caixa-data-sel');const data=sel?sel.value:new Date().toISOString().split('T')[0];
   const tsInicio=new Date(`${data}T06:00:00`).toISOString();const dtFim=new Date(`${data}T06:00:00`);dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);const tsFim=dtFim.toISOString();
-  const [{data:V},{data:S}]=await Promise.all([
+  const [{data:V},{data:S},{data:PR}]=await Promise.all([
     sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
-    sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim)
+    sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim),
+    sb.from('perdas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false})
   ]);
-  const vendas=V||[];const saidas=S||[];
-  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
+  const vendas=V||[];const saidas=S||[];const perdas=PR||[];
+  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
+  const totalPerdasQty=perdas.reduce((s,p)=>s+Number(p.qty),0);
+  const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
   const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
   const el=document.getElementById('caixa-dia-conteudo');if(!el)return;
   el.innerHTML=`
@@ -367,10 +371,39 @@ async function carregarCaixaDia(){
     <div class="stat-card stat-green"><div class="stat-label">Dinheiro</div><div class="stat-value">${fmt(porPag['dinheiro']||0)}</div></div>
     <div class="stat-card stat-blue"><div class="stat-label">PIX</div><div class="stat-value">${fmt(porPag['pix']||0)}</div></div>
     <div class="stat-card"><div class="stat-label">Cartões</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
+    <div class="stat-card" style="border-color:rgba(192,57,43,0.4)"><div class="stat-label">&#128465; Perdas do Dia</div><div class="stat-value" style="color:var(--red)">${totalPerdasQty} un</div><div class="stat-sub">custo: ${fmt(totalPerdasCusto)}</div></div>
   </div>
-  ${vendas.length===0?`<div class="empty"><div class="empty-icon">📭</div><p>Nenhuma venda neste dia</p></div>`:`
+
+  <!-- SEÇÃO DE PERDAS -->
+  <div style="background:var(--card);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius);padding:14px;margin-bottom:18px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:${perdas.length>0?'12px':'0'}">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:var(--red)">&#128465; Perdas do Dia</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${perdas.length} registro(s) — ${totalPerdasQty} unidades perdidas — custo total: ${fmt(totalPerdasCusto)}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="registrarPerda()">+ Registrar Perda</button>
+    </div>
+    ${perdas.length===0
+      ?'<div style="font-size:12px;color:var(--text3);padding:8px 0">Nenhuma perda registrada neste dia.</div>'
+      :`<div class="table-wrap" style="margin-bottom:0"><table>
+        <thead><tr><th>Horário</th><th>Produto</th><th>Qtd</th><th>Motivo</th><th>Custo Unit.</th><th>Custo Total</th><th>Operador</th><th></th></tr></thead>
+        <tbody>${perdas.map(p=>`<tr>
+          <td style="font-size:11px">${fmtDateFull(p.criado_em)}</td>
+          <td style="font-weight:600">${p.produto}</td>
+          <td style="font-weight:700;color:var(--red)">-${p.qty}</td>
+          <td><span class="badge badge-red">${p.motivo}</span></td>
+          <td style="color:var(--text2)">${fmt(p.custo_unit)}</td>
+          <td style="font-weight:600;color:var(--red)">${fmt(p.custo_total)}</td>
+          <td style="font-size:11px">${p.operador||''}</td>
+          <td><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir perda',()=>excluirPerda(${p.id},'${p.produto.replace(/'/g,"\'")}',${p.qty},${p.criado_em?`'`+p.criado_em+`'`:'null'}))">&#10005;</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>`}
+  </div>
+
+  ${vendas.length===0?`<div class="empty"><div class="empty-icon">&#128205;</div><p>Nenhuma venda neste dia</p></div>`:`
+  <div class="section-hdr"><div class="section-title">Vendas do Dia</div><span style="font-size:11px;color:var(--text2)">${vendas.length} transações</span></div>
   <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comp.</th></tr></thead>
-    <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td><td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">🧾</button></td></tr>`).join('')}</tbody>
+    <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td><td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">&#129534;</button></td></tr>`).join('')}</tbody>
   </table></div>`}`;
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
@@ -1048,6 +1081,133 @@ function renderConfiguracoes(){
   </div>`;
 }
 function salvarSenhas(){const adm=document.getElementById('cfg-senha-adm').value.trim();const caixa=document.getElementById('cfg-senha-caixa').value.trim();if(adm)SENHAS.adm=adm;if(caixa)SENHAS.caixa=caixa;localStorage.setItem('malte_senhas',JSON.stringify(SENHAS));document.getElementById('cfg-msg').textContent='&#10003; Senhas salvas!';document.getElementById('cfg-senha-adm').value='';document.getElementById('cfg-senha-caixa').value='';setTimeout(()=>{document.getElementById('cfg-msg').textContent='';},3000);}
+
+// ══════════════════════════════════════════════
+// 🔴 PERDAS — Registrar no Caixa
+// ══════════════════════════════════════════════
+async function registrarPerda(){
+  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  openModal(`<h3 style="color:var(--red)">&#128465; Registrar Perda</h3>
+  <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--redl);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius-sm);padding:10px;">
+    &#9888; A quantidade será <b style="color:var(--red)">descontada automaticamente</b> do estoque.
+  </div>
+  <div class="modal-field"><label>Produto</label>
+    <select id="prd-prod" onchange="atualizarCustoPerdaProd(this)" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      ${(P||[]).map(p=>`<option value="${p.id}" data-custo="${p.custo}" data-nome="${p.nome}" data-estoque="${p.estoque}">${p.emoji} ${p.nome} — Estoque: ${p.estoque}</option>`).join('')}
+    </select>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <div class="modal-field"><label>Quantidade Perdida</label>
+      <input type="number" id="prd-qty" value="1" min="1" oninput="calcCustoPerda()">
+    </div>
+    <div class="modal-field"><label>Custo Unit. (R$)</label>
+      <input type="number" id="prd-custo-unit" value="0" step="0.01" readonly style="background:var(--bg);color:var(--gold2);font-weight:600;cursor:default;">
+    </div>
+  </div>
+  <div class="modal-field"><label>Custo Total da Perda</label>
+    <input type="text" id="prd-custo-total" readonly value="R$ 0,00" style="background:var(--bg);color:var(--red);font-weight:700;font-size:15px;cursor:default;">
+  </div>
+  <div class="modal-field"><label>Motivo</label>
+    <select id="prd-motivo" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      <option value="Quebra">&#128466; Quebra</option>
+      <option value="Congelamento">&#10052; Congelamento</option>
+      <option value="Estouro">&#128165; Estouro</option>
+      <option value="Vencimento">&#128197; Vencimento</option>
+      <option value="Vazamento">&#128167; Vazamento</option>
+      <option value="Avaria">&#9888; Avaria no transporte</option>
+      <option value="Outro">&#10067; Outro</option>
+    </select>
+  </div>
+  <div class="modal-field"><label>Observação (opcional)</label>
+    <input type="text" id="prd-obs" placeholder="Ex: 2 garrafas quebradas na entrega...">
+  </div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-danger" onclick="confirmarPerda()">&#128465; Registrar Perda</button>
+  </div>`);
+  setTimeout(()=>{
+    const sel=document.getElementById('prd-prod');
+    if(sel)atualizarCustoPerdaProd(sel);
+  },100);
+}
+
+function atualizarCustoPerdaProd(sel){
+  const custo=parseFloat(sel.options[sel.selectedIndex].dataset.custo)||0;
+  const cu=document.getElementById('prd-custo-unit');
+  if(cu)cu.value=custo.toFixed(2);
+  calcCustoPerda();
+}
+
+function calcCustoPerda(){
+  const qty=parseInt(document.getElementById('prd-qty')?.value)||0;
+  const custo=parseFloat(document.getElementById('prd-custo-unit')?.value)||0;
+  const el=document.getElementById('prd-custo-total');
+  if(el)el.value=fmt(qty*custo);
+}
+
+async function confirmarPerda(){
+  const sel=document.getElementById('prd-prod');
+  const pid=parseInt(sel.value);
+  const estoqueAtual=parseInt(sel.options[sel.selectedIndex].dataset.estoque)||0;
+  const qty=parseInt(document.getElementById('prd-qty').value)||0;
+  const custoUnit=parseFloat(document.getElementById('prd-custo-unit').value)||0;
+  const motivo=document.getElementById('prd-motivo').value;
+  const obs=document.getElementById('prd-obs')?.value?.trim()||'';
+
+  if(qty<=0){alert('Informe uma quantidade válida.');return;}
+  if(qty>estoqueAtual){
+    if(!confirm(`Atenção: você está registrando ${qty} unidades como perda, mas o estoque atual é ${estoqueAtual}. Continuar mesmo assim?`))return;
+  }
+
+  const btn=document.querySelector('.btn-danger[onclick="confirmarPerda()"]');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Salvando...';}
+
+  try{
+    const{data:prod,error:eProd}=await sb.from('produtos').select('*').eq('id',pid).single();
+    if(eProd||!prod){alert('Produto não encontrado.');if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}return;}
+
+    const custoTotal=qty*custoUnit;
+
+    // 1. Registra a perda
+    const{error:ePerda}=await sb.from('perdas').insert({
+      produto:prod.nome,
+      qty,
+      custo_unit:custoUnit,
+      custo_total:custoTotal,
+      motivo,
+      observacao:obs,
+      operador:currentUser.nome
+    });
+    if(ePerda){alert('Erro ao registrar perda: '+ePerda.message);if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}return;}
+
+    // 2. Desconta do estoque
+    await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',pid);
+
+    // 3. Log
+    try{await registrarLog('PERDA',`${prod.nome} -${qty} un — Motivo: ${motivo} — Custo: ${fmt(custoTotal)}`);}catch(e){}
+
+    closeModal();
+    alert(`✅ Perda registrada!\n${qty}x ${prod.nome} (${motivo})\nEstoque ajustado: ${prod.estoque} → ${Math.max(0,prod.estoque-qty)} unidades.`);
+    carregarCaixaDia();
+  }catch(e){
+    console.error('Erro confirmarPerda:',e);
+    alert('Erro inesperado: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}
+  }
+}
+
+async function excluirPerda(id,produto,qty,criado_em){
+  try{
+    // Estorna ao estoque
+    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
+    if(prod)await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
+    await sb.from('perdas').delete().eq('id',id);
+    try{await registrarLog('EXCLUIU PERDA',`${produto} +${qty} un (estorno)`);}catch(e){}
+    alert('✅ Perda excluída. Estoque restaurado.');
+    carregarCaixaDia();
+  }catch(e){alert('Erro ao excluir perda: '+e.message);}
+}
+
 
 async function initTabelas(){
   // Tabelas criadas manualmente no Supabase SQL Editor
