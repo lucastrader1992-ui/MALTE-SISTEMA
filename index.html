@@ -704,19 +704,213 @@ async function salvarConta(tipo){const desc=document.getElementById('fin-desc').
 async function pagarConta(id){await sb.from('financeiro').update({pago:true}).eq('id',id);renderFinanceiro();}
 
 async function renderCompras(){
-  const{data:C}=await sb.from('compras').select('*').order('criado_em',{ascending:false});
+  const hoje=new Date().toISOString().split('T')[0];
   document.getElementById('tab-content').innerHTML=`
-  <div class="section-hdr"><div class="section-title">&#128717; Registro de Compras</div><button class="btn btn-primary btn-sm" onclick="novaCompra()">+ Nova Compra</button></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Fornecedor</th><th>Produto</th><th>Qtd</th><th>Total</th><th>Status</th></tr></thead>
-    <tbody>${(C||[]).length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma compra</td></tr>`:
-    (C||[]).map(c=>`<tr><td style="font-size:11px">${fmtDateFull(c.criado_em)}</td><td>${c.fornecedor}</td><td>${c.produto}</td><td>${c.qty}</td><td style="font-weight:600;color:var(--red)">${fmt(c.valor_total)}</td><td><span class="badge ${c.status==='recebido'?'badge-green':c.status==='pendente'?'badge-gold':'badge-red'}">${c.status.toUpperCase()}</span></td></tr>`).join('')}</tbody>
-  </table></div>`;
+  <div class="section-hdr">
+    <div><div class="section-title">&#128717; Registro de Compras</div><div class="section-sub" id="cmp-sub">Selecione um dia para ver as compras</div></div>
+    <button class="btn btn-primary btn-sm" onclick="novaCompra()">+ Nova Compra</button>
+  </div>
+
+  <!-- SELETOR DE DIA -->
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:13px;font-weight:600;color:var(--gold2)">&#128197; Dia da Compra:</span>
+    <input type="date" id="cmp-data-sel" value="${hoje}" style="padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+    <button class="btn btn-primary btn-sm" onclick="carregarComprasDia()">&#128269; Ver</button>
+    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('cmp-data-sel').value='${hoje}';carregarComprasDia()">&#128204; Hoje</button>
+    <button class="btn btn-secondary btn-sm" onclick="irDiaCmpAnterior()">&#9664; Anterior</button>
+    <button class="btn btn-secondary btn-sm" onclick="irDiaCmpProximo()">Próximo &#9654;</button>
+    <button class="btn btn-secondary btn-sm" onclick="verTodasCompras()">&#128203; Todas</button>
+  </div>
+
+  <div id="cmp-conteudo"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
+  await carregarComprasDia();
 }
-async function novaCompra(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128717; Nova Compra</h3><div class="modal-field"><label>Fornecedor</label><input type="text" id="cmp-forn" placeholder="Nome do fornecedor"></div><div class="modal-field"><label>Produto</label><select id="cmp-prod" onchange="atualizarCustoProduto(this)">${(P||[]).map(p=>`<option value="${p.id}" data-custo="${p.custo}">${p.emoji} ${p.nome}</option>`).join('')}</select></div><div class="modal-field"><label>Quantidade</label><input type="number" id="cmp-qty" value="1" min="1" oninput="calcTotalCompra()"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Custo Unit. (R$)</label><input type="number" id="cmp-custo-unit" value="0" step="0.01" oninput="calcTotalCompra()"></div><div class="modal-field"><label>Total (R$)</label><input type="number" id="cmp-total" value="0" step="0.01" style="color:var(--gold2);font-weight:600"></div></div><div class="modal-field"><label>Status</label><select id="cmp-status"><option value="pendente">Pendente</option><option value="recebido">Recebido</option><option value="cancelado">Cancelado</option></select></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarCompra()">Salvar</button></div>`);setTimeout(()=>{const sel=document.getElementById('cmp-prod');if(sel){document.getElementById('cmp-custo-unit').value=sel.options[sel.selectedIndex].dataset.custo||0;calcTotalCompra();}},100);}
-function atualizarCustoProduto(sel){document.getElementById('cmp-custo-unit').value=sel.options[sel.selectedIndex].dataset.custo||0;calcTotalCompra();}
-function calcTotalCompra(){const q=parseInt(document.getElementById('cmp-qty')?.value)||0;const c=parseFloat(document.getElementById('cmp-custo-unit')?.value)||0;const t=document.getElementById('cmp-total');if(t)t.value=(q*c).toFixed(2);}
-async function salvarCompra(){const forn=document.getElementById('cmp-forn').value.trim();if(!forn)return;const pid=parseInt(document.getElementById('cmp-prod').value);const qty=parseInt(document.getElementById('cmp-qty').value)||0;const custo=parseFloat(document.getElementById('cmp-custo-unit').value)||0;const total=parseFloat(document.getElementById('cmp-total').value)||0;const status=document.getElementById('cmp-status').value;const{data:prod}=await sb.from('produtos').select('nome,estoque').eq('id',pid).single();await sb.from('compras').insert({fornecedor:forn,produto:prod.nome,qty,custo_unit:custo,valor_total:total,status});if(status==='recebido'){await sb.from('produtos').update({estoque:prod.estoque+qty,custo}).eq('id',pid);await sb.from('entradas').insert({produto:prod.nome,qty,custo:total,operador:currentUser.nome}).catch(()=>{});}closeModal();renderCompras();}
+
+function irDiaCmpAnterior(){
+  const sel=document.getElementById('cmp-data-sel');if(!sel)return;
+  const d=new Date(sel.value+'T12:00:00');d.setDate(d.getDate()-1);
+  sel.value=d.toISOString().split('T')[0];carregarComprasDia();
+}
+function irDiaCmpProximo(){
+  const sel=document.getElementById('cmp-data-sel');if(!sel)return;
+  const d=new Date(sel.value+'T12:00:00');d.setDate(d.getDate()+1);
+  sel.value=d.toISOString().split('T')[0];carregarComprasDia();
+}
+
+async function verTodasCompras(){
+  const wrap=document.getElementById('cmp-conteudo');if(!wrap)return;
+  const sub=document.getElementById('cmp-sub');
+  wrap.innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  const{data:C}=await sb.from('compras').select('*').order('criado_em',{ascending:false});
+  const compras=C||[];
+  const totalGasto=compras.filter(c=>c.status==='recebido').reduce((s,c)=>s+Number(c.valor_total),0);
+  const totalPend=compras.filter(c=>c.status==='pendente').reduce((s,c)=>s+Number(c.valor_total),0);
+  if(sub)sub.textContent=`${compras.length} compras no total`;
+  wrap.innerHTML=montarTabelaCompras(compras,totalGasto,totalPend,'Todo o período');
+}
+
+async function carregarComprasDia(){
+  const sel=document.getElementById('cmp-data-sel');
+  const data=sel?sel.value:new Date().toISOString().split('T')[0];
+  const tsInicio=new Date(`${data}T00:00:00`).toISOString();
+  const dtFim=new Date(`${data}T23:59:59`).toISOString();
+  const wrap=document.getElementById('cmp-conteudo');if(!wrap)return;
+  const sub=document.getElementById('cmp-sub');
+  wrap.innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  const{data:C}=await sb.from('compras').select('*').gte('data_compra',tsInicio).lte('data_compra',dtFim).order('criado_em',{ascending:false});
+  const compras=C||[];
+  const totalGasto=compras.filter(c=>c.status==='recebido').reduce((s,c)=>s+Number(c.valor_total),0);
+  const totalPend=compras.filter(c=>c.status==='pendente').reduce((s,c)=>s+Number(c.valor_total),0);
+  const dataFmt=new Date(`${data}T12:00:00`).toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});
+  const isHoje=data===new Date().toISOString().split('T')[0];
+  if(sub)sub.textContent=`${dataFmt}${isHoje?' — Hoje':''}`;
+  wrap.innerHTML=montarTabelaCompras(compras,totalGasto,totalPend,dataFmt);
+}
+
+function montarTabelaCompras(compras,totalGasto,totalPend,labelPeriodo){
+  return`
+  <div class="stats-grid" style="margin-bottom:14px;">
+    <div class="stat-card stat-red"><div class="stat-label">Comprado (Recebido)</div><div class="stat-value">${fmt(totalGasto)}</div><div class="stat-sub">${compras.filter(c=>c.status==='recebido').length} itens</div></div>
+    <div class="stat-card stat-gold"><div class="stat-label">Pendente</div><div class="stat-value">${fmt(totalPend)}</div><div class="stat-sub">${compras.filter(c=>c.status==='pendente').length} itens</div></div>
+    <div class="stat-card stat-blue"><div class="stat-label">Total Registros</div><div class="stat-value">${compras.length}</div></div>
+  </div>
+  ${compras.length===0
+    ?`<div class="empty"><div class="empty-icon">&#128717;</div><p>Nenhuma compra neste dia</p><p style="font-size:11px;margin-top:6px;color:var(--text3)">Use "+ Nova Compra" para registrar</p></div>`
+    :`<div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Fornecedor</th><th>Produto</th><th>Qtd</th><th>Custo Unit.</th><th>Total</th><th>Status</th><th>Ação</th></tr></thead>
+      <tbody>${compras.map(c=>`<tr>
+        <td style="font-size:11px">${fmtDateOnly(c.data_compra||c.criado_em)}</td>
+        <td style="font-weight:600">${c.fornecedor}</td>
+        <td>${c.produto}</td>
+        <td style="font-weight:600">${c.qty}</td>
+        <td style="color:var(--text2)">${fmt(c.custo_unit||0)}</td>
+        <td style="font-weight:600;color:var(--red)">${fmt(c.valor_total)}</td>
+        <td>
+          <select onchange="alterarStatusCompra(${c.id},this.value,'${c.status}',${c.qty},'${c.produto.replace(/'/g,"\\'")}')"
+            style="padding:4px 7px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:${c.status==='recebido'?'var(--green)':c.status==='pendente'?'var(--gold2)':'var(--red)'};font-size:11px;font-weight:600;cursor:pointer;">
+            <option value="pendente" ${c.status==='pendente'?'selected':''}>&#9203; PENDENTE</option>
+            <option value="recebido" ${c.status==='recebido'?'selected':''}>&#9989; RECEBIDO</option>
+            <option value="cancelado" ${c.status==='cancelado'?'selected':''}>&#10060; CANCELADO</option>
+          </select>
+        </td>
+        <td><button class="btn btn-danger btn-xs" onclick="excluirCompra(${c.id},'${c.status}',${c.qty},'${c.produto.replace(/'/g,"\\'")}')" title="Excluir">&#10005;</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+}
+
+async function alterarStatusCompra(id,novoStatus,statusAtual,qty,produto){
+  if(novoStatus===statusAtual)return;
+  const msgs={recebido:'Marcar como RECEBIDO? O estoque será atualizado.',cancelado:'Marcar como CANCELADO?',pendente:'Voltar para PENDENTE?'};
+  if(!confirm(msgs[novoStatus]||'Confirmar?')){carregarComprasDia();return;}
+  await sb.from('compras').update({status:novoStatus}).eq('id',id);
+  // Recebido → soma estoque
+  if(novoStatus==='recebido'&&statusAtual!=='recebido'){
+    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
+    if(prod){
+      await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
+      await sb.from('entradas').insert({produto:prod.nome,qty,custo:0,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA]'}).catch(()=>{});
+    }
+  }
+  // De recebido para outro → desconta estoque
+  if(statusAtual==='recebido'&&novoStatus!=='recebido'){
+    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
+    if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+  }
+  carregarComprasDia();
+}
+
+async function excluirCompra(id,status,qty,produto){
+  if(!confirm('Excluir esta compra? Se estiver como RECEBIDO, o estoque será descontado.'))return;
+  if(status==='recebido'){
+    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
+    if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+  }
+  await sb.from('compras').delete().eq('id',id);
+  carregarComprasDia();
+}
+
+async function novaCompra(){
+  const{data:P}=await sb.from('produtos').select('*').order('nome');
+  const hoje=new Date().toISOString().split('T')[0];
+  const dataAtual=document.getElementById('cmp-data-sel')?.value||hoje;
+  openModal(`<h3>&#128717; Nova Compra</h3>
+  <div class="modal-field"><label>&#128197; Data da Compra</label>
+    <input type="date" id="cmp-data" value="${dataAtual}" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+  </div>
+  <div class="modal-field"><label>Fornecedor</label><input type="text" id="cmp-forn" placeholder="Nome do fornecedor"></div>
+  <div class="modal-field"><label>Produto</label>
+    <select id="cmp-prod" onchange="atualizarCustoProduto(this)">
+      ${(P||[]).map(p=>`<option value="${p.id}" data-custo="${p.custo}" data-nome="${p.nome}">${p.emoji} ${p.nome} (estoque: ${p.estoque})</option>`).join('')}
+    </select>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <div class="modal-field"><label>Quantidade</label><input type="number" id="cmp-qty" value="1" min="1" oninput="calcTotalCompra()"></div>
+    <div class="modal-field"><label>Custo Unit. (R$)</label><input type="number" id="cmp-custo-unit" value="0" step="0.01" oninput="calcTotalCompra()"></div>
+  </div>
+  <div class="modal-field"><label>Total (R$)</label><input type="number" id="cmp-total" value="0" step="0.01" style="color:var(--gold2);font-weight:600;width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);font-size:13px;outline:none;"></div>
+  <div class="modal-field"><label>Status</label>
+    <select id="cmp-status">
+      <option value="recebido">&#9989; Recebido — atualiza estoque agora</option>
+      <option value="pendente">&#9203; Pendente — só registra, sem estoque</option>
+      <option value="cancelado">&#10060; Cancelado</option>
+    </select>
+  </div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="salvarCompra()">&#9989; Salvar Compra</button>
+  </div>`);
+  setTimeout(()=>{
+    const sel=document.getElementById('cmp-prod');
+    if(sel){document.getElementById('cmp-custo-unit').value=sel.options[sel.selectedIndex].dataset.custo||0;calcTotalCompra();}
+  },100);
+}
+
+function atualizarCustoProduto(sel){
+  document.getElementById('cmp-custo-unit').value=sel.options[sel.selectedIndex].dataset.custo||0;
+  calcTotalCompra();
+}
+function calcTotalCompra(){
+  const q=parseInt(document.getElementById('cmp-qty')?.value)||0;
+  const c=parseFloat(document.getElementById('cmp-custo-unit')?.value)||0;
+  const t=document.getElementById('cmp-total');
+  if(t)t.value=(q*c).toFixed(2);
+}
+
+async function salvarCompra(){
+  const forn=document.getElementById('cmp-forn').value.trim();
+  if(!forn){alert('Informe o fornecedor.');return;}
+  const pid=parseInt(document.getElementById('cmp-prod').value);
+  const qty=parseInt(document.getElementById('cmp-qty').value)||0;
+  const custo=parseFloat(document.getElementById('cmp-custo-unit').value)||0;
+  const total=parseFloat(document.getElementById('cmp-total').value)||0;
+  const status=document.getElementById('cmp-status').value;
+  const dataCompra=document.getElementById('cmp-data').value;
+  if(qty<=0){alert('Informe uma quantidade válida.');return;}
+  const{data:prod}=await sb.from('produtos').select('nome,estoque').eq('id',pid).single();
+  if(!prod){alert('Produto não encontrado.');return;}
+  // Salva a compra com data_compra
+  const{error}=await sb.from('compras').insert({
+    fornecedor:forn,
+    produto:prod.nome,
+    qty,
+    custo_unit:custo,
+    valor_total:total,
+    status,
+    data_compra:new Date(`${dataCompra}T12:00:00`).toISOString()
+  });
+  if(error){alert('Erro ao salvar: '+error.message);return;}
+  // Se recebido → atualiza estoque imediatamente
+  if(status==='recebido'){
+    await sb.from('produtos').update({estoque:prod.estoque+qty,custo}).eq('id',pid);
+    await sb.from('entradas').insert({produto:prod.nome,qty,custo:total,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA] '+forn}).catch(()=>{});
+    await registrarLog('COMPRA RECEBIDA',`${prod.nome} +${qty} un — ${fmt(total)} — ${forn}`).catch(()=>{});
+  }else{
+    await registrarLog('COMPRA PENDENTE',`${prod.nome} ${qty} un — ${fmt(total)} — ${forn}`).catch(()=>{});
+  }
+  closeModal();
+  alert(`✅ Compra salva!\n${status==='recebido'?`Estoque de ${prod.nome} atualizado: +${qty} unidades.`:'Estoque não alterado (pendente).'}`);
+  carregarComprasDia();
+}
 
 async function renderCMV(){
   const[{data:V},{data:VI},{data:P}]=await Promise.all([sb.from('vendas').select('*').order('criado_em',{ascending:false}),sb.from('venda_itens').select('*'),sb.from('produtos').select('*')]);
