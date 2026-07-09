@@ -808,7 +808,7 @@ async function alterarStatusCompra(id,novoStatus,statusAtual,qty,produto){
     const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
     if(prod){
       await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
-      await sb.from('entradas').insert({produto:prod.nome,qty,custo:0,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA]'}).catch(()=>{});
+      try{await sb.from('entradas').insert({produto:prod.nome,qty,custo:0,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA]'});}catch(e){}
     }
   }
   // De recebido para outro → desconta estoque
@@ -886,30 +886,29 @@ async function salvarCompra(){
   const status=document.getElementById('cmp-status').value;
   const dataCompra=document.getElementById('cmp-data').value;
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
-  const{data:prod}=await sb.from('produtos').select('nome,estoque').eq('id',pid).single();
-  if(!prod){alert('Produto não encontrado.');return;}
-  // Salva a compra com data_compra
-  const{error}=await sb.from('compras').insert({
-    fornecedor:forn,
-    produto:prod.nome,
-    qty,
-    custo_unit:custo,
-    valor_total:total,
-    status,
-    data_compra:new Date(`${dataCompra}T12:00:00`).toISOString()
-  });
-  if(error){alert('Erro ao salvar: '+error.message);return;}
-  // Se recebido → atualiza estoque imediatamente
-  if(status==='recebido'){
-    await sb.from('produtos').update({estoque:prod.estoque+qty,custo}).eq('id',pid);
-    await sb.from('entradas').insert({produto:prod.nome,qty,custo:total,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA] '+forn}).catch(()=>{});
-    await registrarLog('COMPRA RECEBIDA',`${prod.nome} +${qty} un — ${fmt(total)} — ${forn}`).catch(()=>{});
-  }else{
-    await registrarLog('COMPRA PENDENTE',`${prod.nome} ${qty} un — ${fmt(total)} — ${forn}`).catch(()=>{});
+  try{
+    const{data:prod,error:eProd}=await sb.from('produtos').select('nome,estoque').eq('id',pid).single();
+    if(eProd||!prod){alert('Produto não encontrado.');return;}
+    const{error:eCmp}=await sb.from('compras').insert({
+      fornecedor:forn,produto:prod.nome,qty,custo_unit:custo,valor_total:total,status,
+      data_compra:new Date(`${dataCompra}T12:00:00`).toISOString()
+    });
+    if(eCmp){alert('Erro ao salvar compra: '+eCmp.message);return;}
+    if(status==='recebido'){
+      await sb.from('produtos').update({estoque:prod.estoque+qty,custo}).eq('id',pid);
+      try{await sb.from('entradas').insert({produto:prod.nome,qty,custo:total,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA] '+forn});}catch(e2){}
+      try{await registrarLog('COMPRA RECEBIDA',`${prod.nome} +${qty} un — ${fmt(total)} — ${forn}`);}catch(e3){}
+    }else{
+      try{await registrarLog('COMPRA PENDENTE',`${prod.nome} ${qty} un — ${fmt(total)} — ${forn}`);}catch(e4){}
+    }
+    closeModal();
+    alert(`✅ Compra salva!
+${status==='recebido'?`Estoque de ${prod.nome} atualizado: +${qty} unidades.`:'Estoque não alterado (pendente).'}`);
+    carregarComprasDia();
+  }catch(e){
+    console.error('Erro salvarCompra:',e);
+    alert('Erro inesperado: '+e.message);
   }
-  closeModal();
-  alert(`✅ Compra salva!\n${status==='recebido'?`Estoque de ${prod.nome} atualizado: +${qty} unidades.`:'Estoque não alterado (pendente).'}`);
-  carregarComprasDia();
 }
 
 async function renderCMV(){
