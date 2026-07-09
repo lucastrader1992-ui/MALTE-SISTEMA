@@ -249,7 +249,7 @@ function closeModal(){document.getElementById('modal-overlay').classList.remove(
 document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
 function stopMesaPolling(){if(mesaPollingInterval){clearInterval(mesaPollingInterval);mesaPollingInterval=null;}}
 function stopEstoquePolling(){if(estoquePollingInterval){clearInterval(estoquePollingInterval);estoquePollingInterval=null;}}
-async function registrarLog(acao,detalhe){await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe}).catch(()=>{});}
+async function registrarLog(acao,detalhe){try{await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe});}catch(e){}}
 
 window.addEventListener('load',async()=>{
   const s=localStorage.getItem('malte_senhas');if(s)try{SENHAS=JSON.parse(s);}catch(e){}
@@ -374,9 +374,9 @@ async function carregarCaixaDia(){
   </table></div>`}`;
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
-async function confirmarAbrirCaixa(){const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));closeModal();renderCaixa();}
+async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
 function fecharCaixa(){openModal(`<h3>🔒 Fechar Caixa</h3><p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" onclick="confirmarFecharCaixa()">Fechar Caixa</button></div>`);}
-async function confirmarFecharCaixa(){await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});caixaAberto=null;localStorage.removeItem('malte_caixa');closeModal();renderCaixa();}
+async function confirmarFecharCaixa(){try{const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});if(error){alert('Erro ao fechar caixa: '+error.message);return;}caixaAberto=null;localStorage.removeItem('malte_caixa');closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
 async function verComprovante(vendaId){
   const[{data:v},{data:itens}]=await Promise.all([sb.from('vendas').select('*').eq('id',vendaId).single(),sb.from('venda_itens').select('*').eq('venda_id',vendaId)]);
   const I=itens||[];
@@ -403,7 +403,7 @@ async function renderMesas(){
   },5000);
 }
 async function abrirMesa(id){const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(m.status==='livre'){openModal(`<h3>🍺 Mesa ${id}</h3><p style="color:var(--text2);font-size:13px;margin-bottom:18px">Abrir a mesa ${id}?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button></div>`);}else{await modalMesaAberta(id);}}
-async function confirmarAbrirMesa(id){await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);closeModal();renderMesas();}
+async function confirmarAbrirMesa(id){try{const{error}=await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);if(error){alert('Erro ao abrir mesa: '+error.message);return;}closeModal();renderMesas();}catch(e){alert('Erro: '+e.message);}}
 async function modalMesaAberta(id){
   const[{data:m},{data:itens},{data:prods}]=await Promise.all([sb.from('mesas').select('*').eq('id',id).single(),sb.from('mesa_itens').select('*').eq('mesa_id',id),sb.from('produtos').select('*').order('nome')]);
   const I=itens||[];const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);const pagoParcial=m.pago_parcial||0;const restante=total-pagoParcial;
@@ -416,8 +416,8 @@ async function modalMesaAberta(id){
   <div style="max-height:180px;overflow-y:auto;margin-bottom:10px;">${I.length===0?'<div class="empty" style="padding:20px"><p>Nenhum item</p></div>':I.map(i=>`<div class="item-row"><div><div style="font-size:12px;font-weight:500">${i.nome}</div><div style="font-size:11px;color:var(--text2)">${i.qty}x ${fmt(i.preco)} = <b style="color:var(--gold2)">${fmt(Number(i.preco)*i.qty)}</b></div></div><button class="btn btn-danger btn-xs" onclick="removerItemMesa(${i.id},${id})">−</button></div>`).join('')}</div>
   ${I.length>0?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button></div><div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="fecharMesaVenda(${id})">✓ Fechar Mesa</button></div></div>`:`<div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button></div>`}`);
 }
-async function addItemMesa(mesaId){const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await modalMesaAberta(mesaId);}
-async function removerItemMesa(itemId,mesaId){const d=async()=>{await sb.from('mesa_itens').delete().eq('id',itemId);await modalMesaAberta(mesaId);};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',d);}}
+async function addItemMesa(mesaId){try{const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
+async function removerItemMesa(itemId,mesaId){const d=async()=>{try{await sb.from('mesa_itens').delete().eq('id',itemId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao remover item: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',d);}}
 async function fecharMesaVenda(id){
   if(window._fechandoMesa)return;window._fechandoMesa=true;
   try{const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(!m||m.status!=='ocupada'){await sb.from('mesa_itens').delete().eq('mesa_id',id);closeModal();renderMesas();return;}
@@ -428,7 +428,7 @@ async function fecharMesaVenda(id){
   for(const i of I){try{const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);}catch(e){}}
   if(venda)await verComprovante(venda.id);else closeModal();renderMesas();}catch(e){console.error(e);closeModal();renderMesas();}finally{window._fechandoMesa=false;}
 }
-async function cancelarMesa(id){await sb.from('mesa_itens').delete().eq('mesa_id',id);await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);closeModal();renderMesas();}
+async function cancelarMesa(id){try{await sb.from('mesa_itens').delete().eq('mesa_id',id);await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);closeModal();renderMesas();}catch(e){alert('Erro ao cancelar mesa: '+e.message);}}
 
 async function renderBalcao(){
   const{data:prods}=await sb.from('produtos').select('*').order('nome');const P=prods||[];const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
@@ -676,12 +676,12 @@ async function renderProdutos(){
 }
 async function sugestaoPreco(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128161; Sugestão de Preço</h3><div style="max-height:400px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--bg3)"><th style="padding:8px">Produto</th><th style="padding:8px;text-align:center">Compra</th><th style="padding:8px;text-align:center">+30%</th><th style="padding:8px;text-align:center">+50%</th><th style="padding:8px;text-align:center">+70%</th><th style="padding:8px;text-align:center">Atual</th></tr></thead><tbody>${(P||[]).map(p=>{const s30=p.custo/(1-0.30);const s50=p.custo/(1-0.50);const s70=p.custo/(1-0.70);return`<tr style="border-top:1px solid var(--border)"><td style="padding:8px">${p.emoji} ${p.nome}</td><td style="padding:8px;text-align:center;color:var(--red)">${fmt(p.custo)}</td><td style="padding:8px;text-align:center;color:var(--orange)">${fmt(s30)}</td><td style="padding:8px;text-align:center;color:var(--gold2)">${fmt(s50)}</td><td style="padding:8px;text-align:center;color:var(--green)">${fmt(s70)}</td><td style="padding:8px;text-align:center;font-weight:600">${fmt(p.preco)}</td></tr>`;}).join('')}</tbody></table></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
 async function abrirNovoProduto(){openModal(`<h3>&#128247; Novo Produto</h3><div class="modal-field"><label>Nome</label><input type="text" id="np-nome" placeholder="Nome do produto"></div><div class="modal-field"><label>Categoria</label><select id="np-cat"><option>Cerveja</option><option>Refrigerante</option><option>Água</option><option>Destilado</option><option>Energético</option><option>Suco</option><option>Outro</option></select></div><div class="modal-field"><label>Emoji</label><input type="text" id="np-emoji" value="&#127866;" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra (R$)</label><input type="number" id="np-custo" value="0" step="0.01"></div><div class="modal-field"><label>Preço de Venda (R$)</label><input type="number" id="np-preco" value="0" step="0.01"></div></div><div class="modal-field"><label>Estoque Inicial</label><input type="number" id="np-estoque" value="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarNovoProduto()">Salvar</button></div>`);}
-async function salvarNovoProduto(){const nome=document.getElementById('np-nome').value.trim();if(!nome)return;await sb.from('produtos').insert({nome,cat:document.getElementById('np-cat').value,emoji:document.getElementById('np-emoji').value||'📦',custo:parseFloat(document.getElementById('np-custo').value)||0,preco:parseFloat(document.getElementById('np-preco').value)||0,estoque:parseInt(document.getElementById('np-estoque').value)||0});closeModal();renderProdutos();}
+async function salvarNovoProduto(){const nome=document.getElementById('np-nome').value.trim();if(!nome)return;try{const{error}=await sb.from('produtos').insert({nome,cat:document.getElementById('np-cat').value,emoji:document.getElementById('np-emoji').value||'📦',custo:parseFloat(document.getElementById('np-custo').value)||0,preco:parseFloat(document.getElementById('np-preco').value)||0,estoque:parseInt(document.getElementById('np-estoque').value)||0});if(error){alert('Erro ao salvar produto: '+error.message);return;}closeModal();renderProdutos();}catch(e){alert('Erro: '+e.message);}}
 async function editarProduto(id){const{data:p}=await sb.from('produtos').select('*').eq('id',id).single();openModal(`<h3>&#9999; Editar Produto</h3><div class="modal-field"><label>Nome</label><input type="text" id="ep-nome" value="${p.nome}"></div><div class="modal-field"><label>Categoria</label><select id="ep-cat">${['Cerveja','Refrigerante','Água','Destilado','Energético','Suco','Outro'].map(c=>`<option${c===p.cat?' selected':''}>${c}</option>`).join('')}</select></div><div class="modal-field"><label>Emoji</label><input type="text" id="ep-emoji" value="${p.emoji}" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra</label><input type="number" id="ep-custo" value="${p.custo}" step="0.01"></div><div class="modal-field"><label>Preço de Venda</label><input type="number" id="ep-preco" value="${p.preco}" step="0.01"></div></div><div class="modal-field"><label>Estoque</label><input type="number" id="ep-estoque" value="${p.estoque}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEditarProduto(${id})">Salvar</button></div>`);}
-async function confirmarEditarProduto(id){await sb.from('produtos').update({nome:document.getElementById('ep-nome').value.trim(),cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0,estoque:parseInt(document.getElementById('ep-estoque').value)||0}).eq('id',id);closeModal();renderProdutos();}
-async function removerProduto(id){await sb.from('produtos').delete().eq('id',id);renderProdutos();}
+async function confirmarEditarProduto(id){try{const{error}=await sb.from('produtos').update({nome:document.getElementById('ep-nome').value.trim(),cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0,estoque:parseInt(document.getElementById('ep-estoque').value)||0}).eq('id',id);if(error){alert('Erro ao editar produto: '+error.message);return;}closeModal();renderProdutos();}catch(e){alert('Erro: '+e.message);}}
+async function removerProduto(id){try{const{error}=await sb.from('produtos').delete().eq('id',id);if(error){alert('Erro ao remover produto: '+error.message);return;}renderProdutos();}catch(e){alert('Erro: '+e.message);}}
 async function gerenciarPromocoes(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128293; Gerenciar Promoções</h3><div style="max-height:380px;overflow-y:auto;">${(P||[]).map(p=>`<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px;margin-bottom:7px;border:1px solid ${p.em_promo?'rgba(192,57,43,0.4)':'var(--border)'};"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;"><div style="font-size:13px;font-weight:600">${p.emoji} ${p.nome}</div><div style="font-size:11px;color:var(--text2)">Normal: ${fmt(p.preco)}</div></div><div style="display:flex;align-items:center;gap:7px;"><input type="number" id="promo-${p.id}" value="${p.preco_promo||p.preco}" step="0.01" style="width:90px;padding:5px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;"><button class="btn ${p.em_promo?'btn-danger':'btn-orange'} btn-xs" onclick="togglePromo(${p.id},${!p.em_promo})">${p.em_promo?'Desativar':'Ativar'}</button></div></div>`).join('')}</div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
-async function togglePromo(id,ativar){const preco_promo=parseFloat(document.getElementById('promo-'+id).value)||0;await sb.from('produtos').update({em_promo:ativar,preco_promo}).eq('id',id);gerenciarPromocoes();}
+async function togglePromo(id,ativar){const preco_promo=parseFloat(document.getElementById('promo-'+id).value)||0;try{const{error}=await sb.from('produtos').update({em_promo:ativar,preco_promo}).eq('id',id);if(error){alert('Erro ao atualizar promoção: '+error.message);return;}gerenciarPromocoes();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderFinanceiro(){
   const{data:F}=await sb.from('financeiro').select('*').order('vencimento',{ascending:true});
@@ -700,8 +700,8 @@ async function renderFinanceiro(){
   </div>`;
 }
 function novaContaFinanceiro(tipo){openModal(`<h3>${tipo==='pagar'?'&#128228; Nova Conta a Pagar':'&#128229; Nova Conta a Receber'}</h3><div class="modal-field"><label>Descrição</label><input type="text" id="fin-desc" placeholder="Ex: Fornecedor, aluguel..."></div><div class="modal-field"><label>Valor (R$)</label><input type="number" id="fin-valor" value="0" step="0.01"></div><div class="modal-field"><label>Vencimento</label><input type="date" id="fin-venc" value="${new Date().toISOString().split('T')[0]}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarConta('${tipo}')">Salvar</button></div>`);}
-async function salvarConta(tipo){const desc=document.getElementById('fin-desc').value.trim();if(!desc)return;await sb.from('financeiro').insert({tipo,descricao:desc,valor:parseFloat(document.getElementById('fin-valor').value)||0,vencimento:document.getElementById('fin-venc').value,pago:false});closeModal();renderFinanceiro();}
-async function pagarConta(id){await sb.from('financeiro').update({pago:true}).eq('id',id);renderFinanceiro();}
+async function salvarConta(tipo){const desc=document.getElementById('fin-desc').value.trim();if(!desc)return;try{const{error}=await sb.from('financeiro').insert({tipo,descricao:desc,valor:parseFloat(document.getElementById('fin-valor').value)||0,vencimento:document.getElementById('fin-venc').value,pago:false});if(error){alert('Erro ao salvar: '+error.message);return;}closeModal();renderFinanceiro();}catch(e){alert('Erro: '+e.message);}}
+async function pagarConta(id){try{const{error}=await sb.from('financeiro').update({pago:true}).eq('id',id);if(error){alert('Erro ao marcar como pago: '+error.message);return;}renderFinanceiro();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderCompras(){
   const hoje=new Date().toISOString().split('T')[0];
@@ -821,12 +821,15 @@ async function alterarStatusCompra(id,novoStatus,statusAtual,qty,produto){
 
 async function excluirCompra(id,status,qty,produto){
   if(!confirm('Excluir esta compra? Se estiver como RECEBIDO, o estoque será descontado.'))return;
-  if(status==='recebido'){
-    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
-  }
-  await sb.from('compras').delete().eq('id',id);
-  carregarComprasDia();
+  try{
+    if(status==='recebido'){
+      const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
+      if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+    }
+    const{error}=await sb.from('compras').delete().eq('id',id);
+    if(error){alert('Erro ao excluir: '+error.message);return;}
+    carregarComprasDia();
+  }catch(e){alert('Erro ao excluir compra: '+e.message);}
 }
 
 async function novaCompra(){
@@ -948,8 +951,8 @@ async function renderComissoes(){
   </table></div>`;
 }
 function novaComissao(){openModal(`<h3>&#128188; Nova Comissão</h3><div class="modal-field"><label>Funcionário</label><input type="text" id="com-func" placeholder="Nome do funcionário"></div><div class="modal-field"><label>Descrição</label><input type="text" id="com-desc" placeholder="Ex: Comissão de vendas Maio"></div><div class="modal-field"><label>Valor (R$)</label><input type="number" id="com-valor" value="0" step="0.01"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarComissao()">Salvar</button></div>`);}
-async function salvarComissao(){const func=document.getElementById('com-func').value.trim();if(!func)return;await sb.from('comissoes').insert({funcionario:func,descricao:document.getElementById('com-desc').value,valor:parseFloat(document.getElementById('com-valor').value)||0,pago:false});closeModal();renderComissoes();}
-async function pagarComissao(id){await sb.from('comissoes').update({pago:true}).eq('id',id);renderComissoes();}
+async function salvarComissao(){const func=document.getElementById('com-func').value.trim();if(!func)return;try{const{error}=await sb.from('comissoes').insert({funcionario:func,descricao:document.getElementById('com-desc').value,valor:parseFloat(document.getElementById('com-valor').value)||0,pago:false});if(error){alert('Erro ao salvar: '+error.message);return;}closeModal();renderComissoes();}catch(e){alert('Erro: '+e.message);}}
+async function pagarComissao(id){try{const{error}=await sb.from('comissoes').update({pago:true}).eq('id',id);if(error){alert('Erro ao marcar como pago: '+error.message);return;}renderComissoes();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderTarefas(){
   const{data:T}=await sb.from('tarefas').select('*').order('criado_em',{ascending:false});
@@ -960,9 +963,9 @@ async function renderTarefas(){
   ${concluidas.length>0?`<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;"><div style="font-size:12px;color:var(--text3);margin-bottom:10px">CONCLUÍDAS (${concluidas.length})</div>${concluidas.slice(0,5).map(t=>`<div class="tarefa-card concluida"><div class="tarefa-check ok" onclick="toggleTarefa(${t.id},false)">&#10003;</div><div style="flex:1;text-decoration:line-through;font-size:13px;color:var(--text3)">${t.titulo}</div><button class="btn btn-danger btn-xs" onclick="deletarTarefa(${t.id})">&#10005;</button></div>`).join('')}</div>`:''}`;
 }
 function novaTarefa(){openModal(`<h3>&#9989; Nova Tarefa</h3><div class="modal-field"><label>Título</label><input type="text" id="tar-titulo" placeholder="O que precisa fazer?"></div><div class="modal-field"><label>Descrição (opcional)</label><textarea id="tar-desc" placeholder="Detalhes..."></textarea></div><div class="modal-field"><label>Prioridade</label><select id="tar-prio"><option value="baixa">&#127802; Baixa</option><option value="media" selected>&#129001; Média</option><option value="alta">&#128308; Alta</option></select></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarTarefa()">Salvar</button></div>`);}
-async function salvarTarefa(){const titulo=document.getElementById('tar-titulo').value.trim();if(!titulo)return;await sb.from('tarefas').insert({titulo,descricao:document.getElementById('tar-desc').value,prioridade:document.getElementById('tar-prio').value,concluida:false});closeModal();renderTarefas();}
-async function toggleTarefa(id,status){await sb.from('tarefas').update({concluida:status}).eq('id',id);renderTarefas();}
-async function deletarTarefa(id){await sb.from('tarefas').delete().eq('id',id);renderTarefas();}
+async function salvarTarefa(){const titulo=document.getElementById('tar-titulo').value.trim();if(!titulo)return;try{const{error}=await sb.from('tarefas').insert({titulo,descricao:document.getElementById('tar-desc').value,prioridade:document.getElementById('tar-prio').value,concluida:false});if(error){alert('Erro ao salvar tarefa: '+error.message);return;}closeModal();renderTarefas();}catch(e){alert('Erro: '+e.message);}}
+async function toggleTarefa(id,status){try{await sb.from('tarefas').update({concluida:status}).eq('id',id);renderTarefas();}catch(e){alert('Erro ao atualizar tarefa: '+e.message);}}
+async function deletarTarefa(id){try{const{error}=await sb.from('tarefas').delete().eq('id',id);if(error){alert('Erro ao deletar tarefa: '+error.message);return;}renderTarefas();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderAnotacoes(){
   const{data:A}=await sb.from('anotacoes').select('*').order('criado_em',{ascending:false});
@@ -974,8 +977,8 @@ async function renderAnotacoes(){
   </div>`;
 }
 function novaAnotacao(){openModal(`<h3>&#128221; Nova Anotação</h3><div class="modal-field"><label>Título</label><input type="text" id="not-titulo" placeholder="Título da nota"></div><div class="modal-field"><label>Conteúdo</label><textarea id="not-conteudo" placeholder="Escreva aqui..." style="min-height:120px"></textarea></div><div class="modal-field"><label>Cor</label><select id="not-cor"><option value="var(--gold)">&#127841; Amarelo</option><option value="var(--blue)">&#128309; Azul</option><option value="var(--green)">&#127802; Verde</option><option value="var(--red)">&#128308; Vermelho</option><option value="var(--purple)">&#128995; Roxo</option></select></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarAnotacao()">Salvar</button></div>`);}
-async function salvarAnotacao(){const titulo=document.getElementById('not-titulo').value.trim();if(!titulo)return;await sb.from('anotacoes').insert({titulo,conteudo:document.getElementById('not-conteudo').value,cor:document.getElementById('not-cor').value});closeModal();renderAnotacoes();}
-async function deletarAnotacao(id){await sb.from('anotacoes').delete().eq('id',id);renderAnotacoes();}
+async function salvarAnotacao(){const titulo=document.getElementById('not-titulo').value.trim();if(!titulo)return;try{const{error}=await sb.from('anotacoes').insert({titulo,conteudo:document.getElementById('not-conteudo').value,cor:document.getElementById('not-cor').value});if(error){alert('Erro ao salvar nota: '+error.message);return;}closeModal();renderAnotacoes();}catch(e){alert('Erro: '+e.message);}}
+async function deletarAnotacao(id){try{const{error}=await sb.from('anotacoes').delete().eq('id',id);if(error){alert('Erro ao deletar nota: '+error.message);return;}renderAnotacoes();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderRelatorios(){
   const hoje=new Date();const inicioMes=new Date(hoje.getFullYear(),hoje.getMonth(),1).toISOString().split('T')[0];const fimMes=hoje.toISOString().split('T')[0];
@@ -1047,21 +1050,8 @@ function renderConfiguracoes(){
 function salvarSenhas(){const adm=document.getElementById('cfg-senha-adm').value.trim();const caixa=document.getElementById('cfg-senha-caixa').value.trim();if(adm)SENHAS.adm=adm;if(caixa)SENHAS.caixa=caixa;localStorage.setItem('malte_senhas',JSON.stringify(SENHAS));document.getElementById('cfg-msg').textContent='&#10003; Senhas salvas!';document.getElementById('cfg-senha-adm').value='';document.getElementById('cfg-senha-caixa').value='';setTimeout(()=>{document.getElementById('cfg-msg').textContent='';},3000);}
 
 async function initTabelas(){
-  const queries=[
-    `alter table mesas add column if not exists pago_parcial numeric(10,2) default 0`,
-    `create table if not exists pagamentos_parciais (id bigint generated always as identity primary key, mesa_id integer, valor numeric(10,2), pagamento text, quem_pagou text, operador text, criado_em timestamptz default now())`,
-    `create table if not exists tarefas (id bigint generated always as identity primary key, titulo text, descricao text, prioridade text default 'media', concluida boolean default false, criado_em timestamptz default now())`,
-    `create table if not exists anotacoes (id bigint generated always as identity primary key, titulo text, conteudo text, cor text, criado_em timestamptz default now())`,
-    `create table if not exists comissoes (id bigint generated always as identity primary key, funcionario text, descricao text, valor numeric(10,2), pago boolean default false, criado_em timestamptz default now())`,
-    `create table if not exists saidas_caixa (id bigint generated always as identity primary key, valor numeric(10,2), motivo text, autorizado_por text, operador text, criado_em timestamptz default now())`,
-    `create table if not exists saidas_estoque (id bigint generated always as identity primary key, produto text, qty integer, origem text, operador text, criado_em timestamptz default now())`,
-    `create table if not exists log_acoes (id bigint generated always as identity primary key, operador text, acao text, detalhe text, criado_em timestamptz default now())`,
-    `create table if not exists caixa_status (id integer primary key default 1, aberto boolean default false, abertura timestamptz, troco numeric(10,2) default 0, operador text)`,
-    `insert into caixa_status (id,aberto) values (1,false) on conflict (id) do nothing`,
-    `alter table entradas add column if not exists observacao text`,
-    `create table if not exists entradas_bruno (id bigint generated always as identity primary key, produto text not null, categoria text, qty integer not null default 0, custo numeric(10,2) default 0, observacao text, criado_em timestamptz default now())`,
-  ];
-  for(const q of queries){await sb.rpc('exec_sql',{sql:q}).catch(()=>{});}
+  // Tabelas criadas manualmente no Supabase SQL Editor
+  // exec_sql não funciona sem função customizada no banco
   await carregarEstadoCaixa();
 }
 initTabelas();
