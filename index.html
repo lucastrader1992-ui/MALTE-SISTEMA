@@ -590,36 +590,48 @@ function calcCustoUnitBruno(){
 }
 
 async function confirmarEntradaBruno(){
-  const pid=parseInt(document.getElementById('bru-prod').value);
-  const qty=parseInt(document.getElementById('bru-qty').value)||0;
-  const custo=parseFloat(document.getElementById('bru-custo').value)||0;
-  const obs=document.getElementById('bru-obs')?.value?.trim()||'';
-  const dataEnt=document.getElementById('bru-data')?.value;
-  if(qty<=0){alert('Informe uma quantidade válida.');return;}
-  const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();
-  if(!prod){alert('Produto não encontrado.');return;}
-  const tsEntrada=dataEnt?new Date(`${dataEnt}T${new Date().toTimeString().slice(0,8)}`).toISOString():new Date().toISOString();
-  // 1. Registra na tabela do Bruno
-  await sb.from('entradas_bruno').insert({produto:prod.nome,categoria:prod.cat,qty,custo,observacao:obs,criado_em:tsEntrada});
-  // 2. Soma ao estoque geral
-  await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);
-  // 3. Registra na tabela de entradas geral
-  await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:'Bruno',observacao:'[ENTRADA BRUNO] '+(obs||''),criado_em:tsEntrada}).catch(()=>{});
-  await registrarLog('ENTRADA BRUNO',`${prod.nome} +${qty} un — ${fmt(custo)}`);
-  closeModal();
-  alert(`✅ Entrada registrada!\n${qty}x ${prod.nome} adicionado ao estoque geral.`);
-  await carregarStatsBruno();
-  await carregarHistoricoBruno();
+  const btn=document.querySelector('.btn-bruno[onclick="confirmarEntradaBruno()"]');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Salvando...';}
+  try{
+    const pid=parseInt(document.getElementById('bru-prod').value);
+    const qty=parseInt(document.getElementById('bru-qty').value)||0;
+    const custo=parseFloat(document.getElementById('bru-custo').value)||0;
+    const obs=document.getElementById('bru-obs')?.value?.trim()||'';
+    const dataEnt=document.getElementById('bru-data')?.value;
+    if(qty<=0){alert('Informe uma quantidade válida.');if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
+    const{data:prod,error:eProd}=await sb.from('produtos').select('*').eq('id',pid).single();
+    if(eProd||!prod){alert('Erro ao buscar produto: '+(eProd?.message||'não encontrado'));if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
+    const tsEntrada=dataEnt?new Date(`${dataEnt}T${new Date().toTimeString().slice(0,8)}`).toISOString():new Date().toISOString();
+    // 1. Registra na tabela do Bruno
+    const{error:eBruno}=await sb.from('entradas_bruno').insert({produto:prod.nome,categoria:prod.cat,qty,custo,observacao:obs,criado_em:tsEntrada});
+    if(eBruno){alert('Erro ao salvar: '+eBruno.message);if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
+    // 2. Soma ao estoque geral
+    await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);
+    // 3. Registra na tabela entradas geral (ignora erro)
+    try{await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:'Bruno',observacao:'[ENTRADA BRUNO] '+(obs||''),criado_em:tsEntrada});}catch(e2){}
+    // 4. Log (ignora erro)
+    try{await registrarLog('ENTRADA BRUNO',`${prod.nome} +${qty} un — ${fmt(custo)}`);}catch(e3){}
+    closeModal();
+    alert(`✅ Entrada registrada!
+${qty}x ${prod.nome} adicionado ao estoque geral.`);
+    await carregarStatsBruno();
+    await carregarHistoricoBruno();
+  }catch(e){
+    console.error('Erro confirmarEntradaBruno:',e);
+    alert('Erro inesperado: '+e.message);
+    if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}
+  }
 }
-
 async function removerEntradaBruno(id,produto,qty){
-  const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-  if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
-  await sb.from('entradas_bruno').delete().eq('id',id);
-  await registrarLog('REMOVEU ENTRADA BRUNO',`${produto} -${qty} un`);
-  alert('✅ Entrada removida. Estoque ajustado.');
-  await carregarStatsBruno();
-  await carregarHistoricoBruno();
+  try{
+    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
+    if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+    await sb.from('entradas_bruno').delete().eq('id',id);
+    try{await registrarLog('REMOVEU ENTRADA BRUNO',`${produto} -${qty} un`);}catch(e){}
+    alert('✅ Entrada removida. Estoque ajustado.');
+    await carregarStatsBruno();
+    await carregarHistoricoBruno();
+  }catch(e){alert('Erro ao remover: '+e.message);}
 }
 
 async function imprimirRelatorioBruno(){
