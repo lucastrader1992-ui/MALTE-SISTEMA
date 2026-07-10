@@ -235,6 +235,7 @@ let SENHAS={adm:'11300955',caixa:'1234'};
 const USERS={adm:{role:'adm',nome:'Administrador'},caixa:{role:'caixa',nome:'Caixa'}};
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
+let splitPagamentos=[];
 let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null;
 function stopGlobalPolling(){if(globalPollingInterval){clearInterval(globalPollingInterval);globalPollingInterval=null;}}
 function modalAberto(){return document.getElementById('modal-overlay').classList.contains('open')||document.getElementById('senha-overlay').classList.contains('open');}
@@ -245,13 +246,77 @@ const fmt=v=>'R$ '+Number(v||0).toFixed(2).replace('.',',');
 const fmtDate=d=>{const dt=new Date(d);return dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});};
 const fmtDateFull=d=>{const dt=new Date(d);return dt.toLocaleDateString('pt-BR')+' '+fmtDate(d);};
 const fmtDateOnly=d=>new Date(d).toLocaleDateString('pt-BR');
-function selPay(t){payAtual=t;document.querySelectorAll('.pay-btn').forEach(b=>b.classList.remove('sel'));const el=document.getElementById('pay-'+t);if(el)el.classList.add('sel');}
+function selPay(t){payAtual=t;splitPagamentos=[];document.querySelectorAll('.pay-btn').forEach(b=>b.classList.remove('sel'));const el=document.getElementById('pay-'+t);if(el)el.classList.add('sel');const area=document.getElementById('split-area');if(area)area.style.display='none';}
 function openModal(h){document.getElementById('modal-content').innerHTML=h;document.getElementById('modal-overlay').classList.add('open');}
-function closeModal(){document.getElementById('modal-overlay').classList.remove('open');}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('open');splitPagamentos=[];window._splitTotalRef=0;}
 document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
 function stopMesaPolling(){if(mesaPollingInterval){clearInterval(mesaPollingInterval);mesaPollingInterval=null;}}
 function stopEstoquePolling(){if(estoquePollingInterval){clearInterval(estoquePollingInterval);estoquePollingInterval=null;}}
 async function registrarLog(acao,detalhe){try{await sb.from('log_acoes').insert({operador:currentUser.nome,acao,detalhe});}catch(e){}}
+
+// ══════════════════════════════════════════════
+// 🔀 PAGAMENTO DIVIDIDO (2 ou mais formas)
+// ══════════════════════════════════════════════
+function toggleSplitPagamento(totalRef){
+  const area=document.getElementById('split-area');
+  if(!area)return;
+  const isOpen=area.style.display==='block';
+  if(isOpen){area.style.display='none';return;}
+  document.querySelectorAll('.pay-btn').forEach(b=>b.classList.remove('sel'));
+  const btn=document.getElementById('pay-dividir');if(btn)btn.classList.add('sel');
+  window._splitTotalRef=totalRef;
+  if(splitPagamentos.length===0){splitPagamentos=[{metodo:'dinheiro',valor:Number(totalRef.toFixed(2))},{metodo:'pix',valor:0}];}
+  area.style.display='block';
+  renderSplitArea();
+}
+function renderSplitArea(){
+  const area=document.getElementById('split-area');if(!area)return;
+  const totalRef=window._splitTotalRef||0;
+  const alocado=splitPagamentos.reduce((s,r)=>s+(Number(r.valor)||0),0);
+  const falta=totalRef-alocado;
+  const metodos={dinheiro:'💵 Dinheiro',pix:'📱 PIX',debito:'💳 Débito',credito:'💳 Crédito'};
+  area.innerHTML=`
+    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px;margin-top:8px;">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">🔀 Pagamento em duas ou mais formas</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:9px;">
+        ${splitPagamentos.map((r,idx)=>`
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select onchange="atualizarMetodoSplit(${idx},this.value)" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+              ${Object.entries(metodos).map(([k,v])=>`<option value="${k}" ${r.metodo===k?'selected':''}>${v}</option>`).join('')}
+            </select>
+            <input type="number" step="0.01" min="0" value="${r.valor}" oninput="atualizarValorSplit(${idx},this.value)" style="width:110px;padding:10px;background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:14px;font-weight:600;text-align:right;">
+            <button type="button" class="btn btn-danger btn-xs" onclick="removerSplitRow(${idx})">✕</button>
+          </div>`).join('')}
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" style="width:100%;margin-bottom:9px;" onclick="adicionarSplitRow()">+ Adicionar forma de pagamento</button>
+      <div id="split-resumo" style="font-size:12px;font-weight:600;margin-bottom:9px;color:${Math.abs(falta)<0.01?'var(--green)':'var(--red)'}">
+        Total: ${fmt(totalRef)} &nbsp;|&nbsp; Alocado: ${fmt(alocado)} &nbsp;|&nbsp; ${Math.abs(falta)<0.01?'✓ Confere':'Falta: '+fmt(falta)}
+      </div>
+      <button type="button" class="btn btn-primary" style="width:100%" onclick="confirmarSplitPagamento()">✓ Confirmar Divisão</button>
+    </div>`;
+}
+function adicionarSplitRow(){splitPagamentos.push({metodo:'dinheiro',valor:0});renderSplitArea();}
+function removerSplitRow(idx){splitPagamentos.splice(idx,1);renderSplitArea();}
+function atualizarMetodoSplit(idx,val){splitPagamentos[idx].metodo=val;}
+function atualizarValorSplit(idx,val){
+  splitPagamentos[idx].valor=parseFloat(val)||0;
+  const totalRef=window._splitTotalRef||0;
+  const alocado=splitPagamentos.reduce((s,r)=>s+(Number(r.valor)||0),0);
+  const falta=totalRef-alocado;
+  const el=document.getElementById('split-resumo');
+  if(el){el.style.color=Math.abs(falta)<0.01?'var(--green)':'var(--red)';el.innerHTML=`Total: ${fmt(totalRef)} &nbsp;|&nbsp; Alocado: ${fmt(alocado)} &nbsp;|&nbsp; ${Math.abs(falta)<0.01?'✓ Confere':'Falta: '+fmt(falta)}`;}
+}
+function confirmarSplitPagamento(){
+  const totalRef=window._splitTotalRef||0;
+  const validos=splitPagamentos.filter(r=>Number(r.valor)>0);
+  const alocado=validos.reduce((s,r)=>s+Number(r.valor),0);
+  if(validos.length<2){alert('Adicione pelo menos duas formas de pagamento com valor.');return;}
+  if(Math.abs(totalRef-alocado)>0.01){alert('Os valores não somam o total da conta. Ajuste antes de confirmar.');return;}
+  const nomes={dinheiro:'Dinheiro',pix:'PIX',debito:'Débito',credito:'Crédito'};
+  payAtual=validos.map(r=>`${nomes[r.metodo]||r.metodo} ${fmt(r.valor)}`).join(' + ');
+  const area=document.getElementById('split-area');if(area)area.style.display='none';
+  const btn=document.getElementById('pay-dividir');if(btn){btn.classList.add('sel');btn.innerHTML='🔀 '+payAtual;}
+}
 
 window.addEventListener('load',async()=>{
   const s=localStorage.getItem('malte_senhas');if(s)try{SENHAS=JSON.parse(s);}catch(e){}
@@ -481,7 +546,7 @@ async function modalMesaAberta(id){
     </div>
   </div>
   <div style="max-height:180px;overflow-y:auto;margin-bottom:10px;">${I.length===0?'<div class="empty" style="padding:20px"><p>Nenhum item</p></div>':I.map(i=>`<div class="item-row"><div><div style="font-size:12px;font-weight:500">${i.nome}</div><div style="font-size:11px;color:var(--text2)">${i.qty}x ${fmt(i.preco)} = <b style="color:var(--gold2)">${fmt(Number(i.preco)*i.qty)}</b></div></div><button class="btn btn-danger btn-xs" onclick="removerItemMesa(${i.id},${id})">−</button></div>`).join('')}</div>
-  ${I.length>0?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-misto" onclick="selPay('misto')">💰 Pix+Dinheiro</button></div><div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="fecharMesaVenda(${id})">✓ Fechar Mesa</button></div></div>`:`<div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button></div>`}`);
+  ${I.length>0?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${restante})">🔀 Dividir</button></div><div id="split-area" style="display:none;"></div><div style="display:flex;gap:7px;margin-top:10px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="fecharMesaVenda(${id})">✓ Fechar Mesa</button></div></div>`:`<div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button></div>`}`);
 }
 async function addItemMesa(mesaId){try{const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
 async function addItemMesaTouch(mesaId,pid){try{const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(!prod)return;const preco=prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco;const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
@@ -513,8 +578,9 @@ async function renderBalcao(){
     ${balcaoItens.length===0?`<div class="empty" style="padding:24px"><div class="empty-icon">🛒</div><p>Vazio</p></div>`:`
     <div style="max-height:220px;overflow-y:auto;margin-bottom:8px;">${balcaoItens.map((item,idx)=>`<div class="item-row"><div><div style="font-size:11px;font-weight:500">${item.nome}</div><div style="font-size:10px;color:var(--text2)">${fmt(item.preco*item.qty)}</div></div><div class="qty-ctrl"><button class="qty-btn" onclick="qtyBalcao(${idx},-1)">−</button><span class="qty-num">${item.qty}</span><button class="qty-btn" onclick="qtyBalcao(${idx},1)">+</button></div></div>`).join('')}</div>
     <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;"><span>Total</span><span style="color:var(--gold2)">${fmt(total)}</span></div></div>
-    <div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-misto" onclick="selPay('misto')">💰 Pix+Dinheiro</button></div>
-    <button class="btn btn-primary" style="width:100%" onclick="finalizarBalcao()">✓ Finalizar</button>
+    <div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${total})">🔀 Dividir</button></div>
+    <div id="split-area" style="display:none;"></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="finalizarBalcao()">✓ Finalizar</button>
     <button class="btn btn-secondary" style="width:100%;margin-top:5px" onclick="balcaoItens=[];renderBalcao()">Limpar</button>`}
   </div></div></div>`;
 }
