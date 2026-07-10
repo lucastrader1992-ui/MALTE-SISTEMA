@@ -235,7 +235,9 @@ let SENHAS={adm:'11300955',caixa:'1234'};
 const USERS={adm:{role:'adm',nome:'Administrador'},caixa:{role:'caixa',nome:'Caixa'}};
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
-let mesaPollingInterval=null,estoquePollingInterval=null;
+let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null;
+function stopGlobalPolling(){if(globalPollingInterval){clearInterval(globalPollingInterval);globalPollingInterval=null;}}
+function modalAberto(){return document.getElementById('modal-overlay').classList.contains('open')||document.getElementById('senha-overlay').classList.contains('open');}
 
 function getDiaComercial(){const agora=new Date();if(agora.getHours()<6){agora.setDate(agora.getDate()-1);}const inicio=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate(),6,0,0,0);const fim=new Date(inicio);fim.setDate(fim.getDate()+1);fim.setHours(5,59,59,999);return{inicio,fim};}
 function isHojeComercial(d){const dt=new Date(d);const{inicio,fim}=getDiaComercial();return dt>=inicio&&dt<=fim;}
@@ -274,13 +276,13 @@ function doLogin(){
   if(u!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
   goTab('dashboard');
 }
-function doLogout(){currentUser=null;balcaoItens=[];localStorage.removeItem('malte_sessao');stopMesaPolling();stopEstoquePolling();document.getElementById('app').style.display='none';document.getElementById('login-screen').style.display='flex';document.getElementById('login-pass').value='';document.getElementById('login-err').textContent='';document.querySelectorAll('.adm-only').forEach(b=>b.style.display='');}
+function doLogout(){currentUser=null;balcaoItens=[];localStorage.removeItem('malte_sessao');stopMesaPolling();stopEstoquePolling();stopGlobalPolling();document.getElementById('app').style.display='none';document.getElementById('login-screen').style.display='flex';document.getElementById('login-pass').value='';document.getElementById('login-err').textContent='';document.querySelectorAll('.adm-only').forEach(b=>b.style.display='');}
 function pedirSenhaAdm(msg,cb){if(currentUser&&currentUser.id==='adm'){cb();return;}senhaCallback=cb;document.getElementById('senha-msg').textContent=msg||'Digite a senha do Administrador';document.getElementById('senha-input').value='';document.getElementById('senha-err').textContent='';document.getElementById('senha-overlay').classList.add('open');setTimeout(()=>document.getElementById('senha-input').focus(),100);}
 function checkSenha(){if(document.getElementById('senha-input').value===SENHAS.adm){closeSenha();if(senhaCallback)senhaCallback();}else document.getElementById('senha-err').textContent='Senha incorreta.';}
 function closeSenha(){document.getElementById('senha-overlay').classList.remove('open');senhaCallback=null;}
 
 function goTab(tab){
-  stopMesaPolling();stopEstoquePolling();currentTab=tab;
+  stopMesaPolling();stopEstoquePolling();stopGlobalPolling();currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{const t=b.getAttribute('onclick')||'';if(t.includes("'"+tab+"'"))b.classList.add('active');});
   document.getElementById('tab-content').innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
@@ -289,6 +291,28 @@ function goTab(tab){
     compras:renderCompras,cmv:renderCMV,comissoes:renderComissoes,tarefas:renderTarefas,
     anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes};
   if(tabs[tab])tabs[tab]();
+
+  const pollMap={
+    dashboard:renderDashboard,
+    caixa:()=>{ if(!modalAberto())carregarCaixaDia(); },
+    balcao:renderBalcao,
+    produtos:renderProdutos,
+    financeiro:renderFinanceiro,
+    compras:()=>{ if(!modalAberto())carregarComprasDia(); },
+    cmv:renderCMV,
+    comissoes:renderComissoes,
+    tarefas:renderTarefas,
+    anotacoes:renderAnotacoes,
+    bruno:()=>{ if(!modalAberto()){carregarStatsBruno();carregarHistoricoBruno();} },
+    relatorios:()=>{ if(!modalAberto())aplicarFiltroRelatorio(); }
+  };
+  if(pollMap[tab]){
+    globalPollingInterval=setInterval(()=>{
+      if(currentTab!==tab)return stopGlobalPolling();
+      if(modalAberto())return;
+      pollMap[tab]();
+    },7000);
+  }
 }
 
 async function renderDashboard(){
@@ -395,7 +419,7 @@ async function carregarCaixaDia(){
           <td style="color:var(--text2)">${fmt(p.custo_unit)}</td>
           <td style="font-weight:600;color:var(--red)">${fmt(p.custo_total)}</td>
           <td style="font-size:11px">${p.operador||''}</td>
-          <td><button class="btn btn-danger btn-xs" o<button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir perda',()=>excluirPerda(${p.id},${p.qty}))">&#10005;</button></td>
+          <td><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir perda',()=>excluirPerda(${p.id},${p.qty}))">&#10005;</button></td>
         </tr>`).join('')}</tbody>
       </table></div>`}
   </div>
