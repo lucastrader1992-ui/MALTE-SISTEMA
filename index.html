@@ -1265,10 +1265,24 @@ function salvarSenhas(){const adm=document.getElementById('cfg-senha-adm').value
 // ══════════════════════════════════════════════
 async function registrarPerda(){
   let P=[];
-  try{const{data}=await sb.from('produtos').select('*').order('nome');P=data||[];}catch(e){alert('Erro ao carregar produtos: '+e.message);return;}
+  try{const{data,error}=await sb.from('produtos').select('*').order('nome');if(error)throw error;P=data||[];}catch(e){alert('Erro ao carregar produtos: '+e.message);return;}
+  if(P.length===0){alert('Nenhum produto cadastrado ainda. Cadastre um produto antes de registrar perda.');return;}
+  // Usa o dia que está sendo consultado no Caixa como padrão (funciona com caixa aberto ou fechado)
+  const selData=document.getElementById('caixa-data-sel');
+  const diaBase=selData&&selData.value?selData.value:new Date().toISOString().split('T')[0];
+  const agora=new Date();
+  const horaAtual=`${String(agora.getHours()).padStart(2,'0')}:${String(agora.getMinutes()).padStart(2,'0')}`;
   openModal(`<h3 style="color:var(--red)">&#128465; Registrar Perda</h3>
   <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--redl);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius-sm);padding:10px;">
-    &#9888; A quantidade será <b style="color:var(--red)">descontada automaticamente</b> do estoque.
+    &#9888; A quantidade será <b style="color:var(--red)">descontada automaticamente</b> do estoque. A perda entra na contabilidade do <b style="color:var(--red)">dia escolhido abaixo</b>, mesmo com o caixa fechado.
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <div class="modal-field"><label>Dia da Perda</label>
+      <input type="date" id="prd-data" value="${diaBase}">
+    </div>
+    <div class="modal-field"><label>Horário</label>
+      <input type="time" id="prd-hora" value="${horaAtual}">
+    </div>
   </div>
   <div class="modal-field"><label>Produto</label>
     <select id="prd-prod" onchange="atualizarCustoPerdaProd(this)" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(192,57,43,0.3);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
@@ -1326,28 +1340,35 @@ function calcCustoPerda(){
 
 async function confirmarPerda(){
   const sel=document.getElementById('prd-prod');
+  if(!sel||!sel.value){alert('Selecione um produto.');return;}
   const pid=parseInt(sel.value);
   const estoqueAtual=parseInt(sel.options[sel.selectedIndex].dataset.estoque)||0;
   const qty=parseInt(document.getElementById('prd-qty').value)||0;
   const custoUnit=parseFloat(document.getElementById('prd-custo-unit').value)||0;
   const motivo=document.getElementById('prd-motivo').value;
   const obs=document.getElementById('prd-obs')?.value?.trim()||'';
+  const dataSel=document.getElementById('prd-data')?.value||new Date().toISOString().split('T')[0];
+  const horaSel=document.getElementById('prd-hora')?.value||'12:00';
 
+  if(!pid){alert('Selecione um produto válido.');return;}
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
   if(qty>estoqueAtual){
     if(!confirm(`Atenção: você está registrando ${qty} unidades como perda, mas o estoque atual é ${estoqueAtual}. Continuar mesmo assim?`))return;
   }
+
+  // Monta o timestamp com o dia/hora escolhido, para a perda entrar na contabilidade do dia certo
+  const criadoEm=new Date(`${dataSel}T${horaSel}:00`).toISOString();
 
   const btn=document.querySelector('.btn-danger[onclick="confirmarPerda()"]');
   if(btn){btn.disabled=true;btn.textContent='⏳ Salvando...';}
 
   try{
     const{data:prod,error:eProd}=await sb.from('produtos').select('*').eq('id',pid).single();
-    if(eProd||!prod){alert('Produto não encontrado.');if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}return;}
+    if(eProd||!prod){alert('Produto não encontrado: '+(eProd?eProd.message:''));if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}return;}
 
     const custoTotal=qty*custoUnit;
 
-    // 1. Registra a perda
+    // 1. Registra a perda (com a data/hora escolhida)
     const{error:ePerda}=await sb.from('perdas').insert({
       produto:prod.nome,
       qty,
@@ -1355,18 +1376,27 @@ async function confirmarPerda(){
       custo_total:custoTotal,
       motivo,
       observacao:obs,
-      operador:currentUser.nome
+      operador:currentUser.nome,
+      criado_em:criadoEm
     });
-    if(ePerda){alert('Erro ao registrar perda: '+ePerda.message);if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}return;}
+    if(ePerda){
+      alert('Erro ao registrar perda: '+ePerda.message+'\n\nSe o erro mencionar "row-level security" ou "policy", acesse o Supabase → Editor SQL e rode:\nALTER TABLE perdas DISABLE ROW LEVEL SECURITY;');
+      if(btn){btn.disabled=false;btn.textContent='🗑️ Registrar Perda';}
+      return;
+    }
 
-    // 2. Desconta do estoque
-    await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',pid);
+    // 2. Desconta do estoque (sempre no estoque atual/real, independente do dia escolhido para a perda)
+    const{error:eUpdate}=await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',pid);
+    if(eUpdate){alert('Perda registrada, mas houve erro ao atualizar o estoque: '+eUpdate.message);}
 
     // 3. Log
-    try{await registrarLog('PERDA',`${prod.nome} -${qty} un — Motivo: ${motivo} — Custo: ${fmt(custoTotal)}`);}catch(e){}
+    try{await registrarLog('PERDA',`${prod.nome} -${qty} un — Motivo: ${motivo} — Custo: ${fmt(custoTotal)} — Dia: ${dataSel}`);}catch(e){}
 
     closeModal();
-    alert(`✅ Perda registrada!\n${qty}x ${prod.nome} (${motivo})\nEstoque ajustado: ${prod.estoque} → ${Math.max(0,prod.estoque-qty)} unidades.`);
+    alert(`✅ Perda registrada!\n${qty}x ${prod.nome} (${motivo})\nDia: ${dataSel} ${horaSel}\nEstoque ajustado: ${prod.estoque} → ${Math.max(0,prod.estoque-qty)} unidades.`);
+    // Garante que a tela do dia mostrado reflita o dia da perda registrada
+    const selData=document.getElementById('caixa-data-sel');
+    if(selData)selData.value=dataSel;
     carregarCaixaDia();
   }catch(e){
     console.error('Erro confirmarPerda:',e);
