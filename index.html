@@ -187,7 +187,12 @@ tr:hover td{background:rgba(255,255,255,0.02);}
       <button class="role-btn active" onclick="setRole('adm')">👑 Administrador</button>
       <button class="role-btn" onclick="setRole('caixa')">🧾 Caixa</button>
     </div>
-    <div class="field"><label>Usuário</label><input id="login-user" type="text" value="adm"></div>
+    <input id="login-user" type="hidden" value="adm">
+    <div class="field" id="login-operador-field" style="display:none"><label>Operador</label>
+      <select id="login-operador" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:14px;">
+        <option value="">Carregando...</option>
+      </select>
+    </div>
     <div class="field"><label>Senha</label><input id="login-pass" type="password" placeholder="••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="login-btn" onclick="doLogin()">Entrar no Sistema</button>
     <div class="login-err" id="login-err"></div>
@@ -233,6 +238,21 @@ const SUPABASE_KEY='sb_publishable_KlSN5wVH24AYhF7kjEU0pg_NnVl2SQg';
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let SENHAS={adm:'11300955',caixa:'1234'};
 const USERS={adm:{role:'adm',nome:'Administrador'},caixa:{role:'caixa',nome:'Caixa'}};
+let OPERADORES=[];
+async function carregarOperadores(){
+  try{const{data,error}=await sb.from('operadores_caixa').select('*').order('nome');if(error)throw error;OPERADORES=data||[];}
+  catch(e){OPERADORES=[];}
+  return OPERADORES;
+}
+async function carregarOperadoresLogin(){
+  const sel=document.getElementById('login-operador');
+  if(!sel)return;
+  sel.innerHTML='<option value="">Carregando...</option>';
+  await carregarOperadores();
+  const ativos=OPERADORES.filter(o=>o.ativo!==false);
+  if(ativos.length===0){sel.innerHTML='<option value="">Nenhum operador cadastrado</option>';return;}
+  sel.innerHTML=ativos.map(o=>`<option value="${o.id}">${o.nome}</option>`).join('');
+}
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
 let splitPagamentos=[];
@@ -321,22 +341,47 @@ function confirmarSplitPagamento(){
 window.addEventListener('load',async()=>{
   const s=localStorage.getItem('malte_senhas');if(s)try{SENHAS=JSON.parse(s);}catch(e){}
   const sessao=localStorage.getItem('malte_sessao');
-  if(sessao){try{const u=JSON.parse(sessao);if(u&&USERS[u.id]){currentUser=u;document.getElementById('loading-screen').style.display='none';document.getElementById('app').style.display='flex';document.getElementById('top-user-pill').textContent=USERS[u.id].nome;document.getElementById('top-role-badge').textContent=u.id.toUpperCase();if(u.id!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');goTab('dashboard');return;}}catch(e){}}
+  if(sessao){try{const u=JSON.parse(sessao);if(u&&USERS[u.id]){currentUser=u;document.getElementById('loading-screen').style.display='none';document.getElementById('app').style.display='flex';document.getElementById('top-user-pill').textContent=u.nome||USERS[u.id].nome;document.getElementById('top-role-badge').textContent=u.id.toUpperCase();if(u.id!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');goTab('dashboard');return;}}catch(e){}}
   try{await sb.from('produtos').select('id').limit(1);}catch(e){}
   document.getElementById('loading-screen').style.display='none';
   document.getElementById('login-screen').style.display='flex';
 });
 
-function setRole(r){document.querySelectorAll('.role-btn').forEach(b=>b.classList.remove('active'));event.target.classList.add('active');document.getElementById('login-user').value=r;}
-function doLogin(){
+function setRole(r){
+  document.querySelectorAll('.role-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('login-user').value=r;
+  const opField=document.getElementById('login-operador-field');
+  if(r==='caixa'){
+    opField.style.display='block';
+    carregarOperadoresLogin();
+  }else{
+    opField.style.display='none';
+  }
+}
+async function doLogin(){
   const u=document.getElementById('login-user').value.trim().toLowerCase();
   const p=document.getElementById('login-pass').value;
-  if(!USERS[u]||SENHAS[u]!==p){document.getElementById('login-err').textContent='Usuário ou senha incorretos.';return;}
-  currentUser={...USERS[u],id:u};
+  const errEl=document.getElementById('login-err');
+  errEl.textContent='';
+  if(u==='adm'){
+    if(SENHAS.adm!==p){errEl.textContent='Usuário ou senha incorretos.';return;}
+    currentUser={role:'adm',nome:'Administrador',id:'adm'};
+  }else if(u==='caixa'){
+    const opSel=document.getElementById('login-operador');
+    const opId=parseInt(opSel?opSel.value:'');
+    if(!opId){errEl.textContent='Selecione o operador.';return;}
+    if(OPERADORES.length===0)await carregarOperadores();
+    const op=OPERADORES.find(o=>o.id===opId);
+    if(!op||String(op.senha)!==p){errEl.textContent='Usuário ou senha incorretos.';return;}
+    currentUser={role:'caixa',nome:op.nome,id:'caixa',operadorId:op.id};
+  }else{
+    errEl.textContent='Usuário ou senha incorretos.';return;
+  }
   localStorage.setItem('malte_sessao',JSON.stringify(currentUser));
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
-  document.getElementById('top-user-pill').textContent=USERS[u].nome;
+  document.getElementById('top-user-pill').textContent=currentUser.nome;
   document.getElementById('top-role-badge').textContent=u.toUpperCase();
   if(u!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
   goTab('dashboard');
@@ -1235,16 +1280,35 @@ async function aplicarFiltroRelatorio(){
 }
 function imprimirRelatorio(){const c=document.getElementById('relatorio-conteudo');const pa=document.getElementById('print-area');pa.innerHTML=`<div class="relatorio-pdf-area"><h1>&#127866; Malte Distribuidora — Relatório</h1><div class="rel-sub">Gerado em ${new Date().toLocaleString('pt-BR')}</div>${c?c.innerHTML:''}</div>`;pa.style.display='block';window.print();pa.style.display='none';pa.innerHTML='';}
 
-function renderConfiguracoes(){
+async function renderConfiguracoes(){
+  await carregarOperadores();
   document.getElementById('tab-content').innerHTML=`
   <div style="max-width:480px">
     <div class="section-hdr"><div class="section-title">&#9881; Configurações</div></div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:14px">&#128272; Alterar Senhas</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:14px">&#128272; Alterar Senha ADM</div>
       <div class="modal-field"><label>Nova Senha ADM</label><input type="password" id="cfg-senha-adm" placeholder="Nova senha"></div>
-      <div class="modal-field"><label>Nova Senha Caixa</label><input type="password" id="cfg-senha-caixa" placeholder="Nova senha"></div>
-      <button class="btn btn-primary btn-sm" onclick="salvarSenhas()">Salvar Senhas</button>
+      <button class="btn btn-primary btn-sm" onclick="salvarSenhas()">Salvar Senha</button>
       <div id="cfg-msg" style="font-size:12px;margin-top:7px;color:var(--green);min-height:16px"></div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:600;">&#128100; Operadores do Caixa</div>
+        <button class="btn btn-secondary btn-xs" onclick="novoOperadorModal()">+ Novo</button>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:12px;">
+        Cada operador tem login próprio na tela de login (opção "Caixa"). Funciona igual no PC, tablet ou celular.
+      </div>
+      <div id="lista-operadores">
+        ${OPERADORES.length===0?'<div style="font-size:12px;color:var(--text2);padding:10px 0;">Nenhum operador cadastrado ainda.</div>':OPERADORES.map(o=>`
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;padding:8px;background:var(--bg3);border-radius:var(--radius-sm);">
+          <div style="flex:1;font-size:13px;font-weight:600;${o.ativo===false?'color:var(--text2);text-decoration:line-through;':''}">${o.nome}</div>
+          <input type="password" id="op-senha-${o.id}" placeholder="Nova senha" style="width:120px;padding:8px;background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+          <button class="btn btn-secondary btn-xs" onclick="salvarSenhaOperador(${o.id})">Salvar</button>
+          <button class="btn btn-danger btn-xs" onclick="removerOperador(${o.id},'${o.nome.replace(/'/g,"\\'")}')">&#128465;</button>
+        </div>`).join('')}
+      </div>
+      <div id="op-msg" style="font-size:12px;margin-top:5px;color:var(--green);min-height:16px"></div>
     </div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:10px">&#8505; Sistema</div>
@@ -1258,7 +1322,48 @@ function renderConfiguracoes(){
     </div>
   </div>`;
 }
-function salvarSenhas(){const adm=document.getElementById('cfg-senha-adm').value.trim();const caixa=document.getElementById('cfg-senha-caixa').value.trim();if(adm)SENHAS.adm=adm;if(caixa)SENHAS.caixa=caixa;localStorage.setItem('malte_senhas',JSON.stringify(SENHAS));document.getElementById('cfg-msg').textContent='&#10003; Senhas salvas!';document.getElementById('cfg-senha-adm').value='';document.getElementById('cfg-senha-caixa').value='';setTimeout(()=>{document.getElementById('cfg-msg').textContent='';},3000);}
+function novoOperadorModal(){
+  openModal(`<h3>&#128100; Novo Operador do Caixa</h3>
+  <div class="modal-field"><label>Nome</label><input type="text" id="novo-op-nome" placeholder="Ex: Idalina"></div>
+  <div class="modal-field"><label>Senha</label><input type="password" id="novo-op-senha" placeholder="Senha do operador"></div>
+  <div class="modal-actions">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="confirmarNovoOperador()">Adicionar</button>
+  </div>`);
+}
+async function confirmarNovoOperador(){
+  const nome=document.getElementById('novo-op-nome').value.trim();
+  const senha=document.getElementById('novo-op-senha').value.trim();
+  if(!nome||!senha){alert('Preencha nome e senha.');return;}
+  try{
+    const{error}=await sb.from('operadores_caixa').insert({nome,senha,ativo:true});
+    if(error){alert('Erro ao adicionar operador: '+error.message+'\n\nSe mencionar "row-level security", rode no Supabase:\nALTER TABLE operadores_caixa DISABLE ROW LEVEL SECURITY;');return;}
+    closeModal();
+    renderConfiguracoes();
+  }catch(e){alert('Erro inesperado: '+e.message);}
+}
+async function salvarSenhaOperador(id){
+  const input=document.getElementById('op-senha-'+id);
+  const novaSenha=input.value.trim();
+  if(!novaSenha){alert('Digite a nova senha.');return;}
+  try{
+    const{error}=await sb.from('operadores_caixa').update({senha:novaSenha}).eq('id',id);
+    if(error){alert('Erro ao salvar senha: '+error.message);return;}
+    input.value='';
+    const msg=document.getElementById('op-msg');
+    msg.textContent='✓ Senha atualizada!';
+    setTimeout(()=>{msg.textContent='';},3000);
+  }catch(e){alert('Erro inesperado: '+e.message);}
+}
+async function removerOperador(id,nome){
+  if(!confirm(`Remover o operador "${nome}"? Ele não vai mais conseguir fazer login.`))return;
+  try{
+    const{error}=await sb.from('operadores_caixa').delete().eq('id',id);
+    if(error){alert('Erro ao remover: '+error.message);return;}
+    renderConfiguracoes();
+  }catch(e){alert('Erro inesperado: '+e.message);}
+}
+function salvarSenhas(){const adm=document.getElementById('cfg-senha-adm').value.trim();if(adm)SENHAS.adm=adm;localStorage.setItem('malte_senhas',JSON.stringify(SENHAS));document.getElementById('cfg-msg').textContent='&#10003; Senha salva!';document.getElementById('cfg-senha-adm').value='';setTimeout(()=>{document.getElementById('cfg-msg').textContent='';},3000);}
 
 // ══════════════════════════════════════════════
 // 🔴 PERDAS — Registrar no Caixa
