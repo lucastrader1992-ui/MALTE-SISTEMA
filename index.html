@@ -485,19 +485,27 @@ async function carregarEstadoCaixa(){
 async function carregarCaixaDia(){
   const sel=document.getElementById('caixa-data-sel');const data=sel?sel.value:new Date().toISOString().split('T')[0];
   const tsInicio=new Date(`${data}T06:00:00`).toISOString();const dtFim=new Date(`${data}T06:00:00`);dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);const tsFim=dtFim.toISOString();
-  const [{data:V},{data:S},{data:PR}]=await Promise.all([
+  const [{data:V},{data:S},{data:PR},{data:LG}]=await Promise.all([
     sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
     sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim),
-    sb.from('perdas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false})
+    sb.from('perdas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:false}),
+    sb.from('log_acoes').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).in('acao',['ABERTURA CAIXA','FECHAMENTO CAIXA']).order('criado_em',{ascending:true})
   ]);
-  const vendas=V||[];const saidas=S||[];const perdas=PR||[];
+  const vendas=V||[];const saidas=S||[];const perdas=PR||[];const logsCaixa=LG||[];
   const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
   const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
   const totalPerdasQty=perdas.reduce((s,p)=>s+Number(p.qty),0);
   const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
   const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
   const el=document.getElementById('caixa-dia-conteudo');if(!el)return;
-  el.innerHTML=`
+  const logHtml=logsCaixa.length===0?'':`
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;">
+    <div style="font-size:12px;font-weight:700;color:var(--gold2);margin-bottom:6px;">&#128272; Abertura/Fechamento do Caixa</div>
+    ${logsCaixa.map(l=>`<div style="font-size:12px;color:var(--text2);padding:3px 0;">
+      ${l.acao==='ABERTURA CAIXA'?'&#128994;':'&#128308;'} <b style="color:var(--text)">${l.acao==='ABERTURA CAIXA'?'Aberto':'Fechado'} por ${l.operador}</b> às ${fmtDateFull(l.criado_em).split(' ')[1]||fmtDateFull(l.criado_em)} ${l.detalhe?'— '+l.detalhe:''}
+    </div>`).join('')}
+  </div>`;
+  el.innerHTML=logHtml+`
   <div class="stats-grid">
     <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalVendas)}</div><div class="stat-sub">${vendas.length} transações</div></div>
     <div class="stat-card stat-red"><div class="stat-label">Saídas</div><div class="stat-value">${fmt(totalSaidas)}</div></div>
@@ -541,9 +549,9 @@ async function carregarCaixaDia(){
   </table></div>`}`;
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
-async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
+async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));try{await registrarLog('ABERTURA CAIXA',`Troco inicial: ${fmt(troco)}`);}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
 function fecharCaixa(){openModal(`<h3>🔒 Fechar Caixa</h3><p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" onclick="confirmarFecharCaixa()">Fechar Caixa</button></div>`);}
-async function confirmarFecharCaixa(){try{const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});if(error){alert('Erro ao fechar caixa: '+error.message);return;}caixaAberto=null;localStorage.removeItem('malte_caixa');closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
+async function confirmarFecharCaixa(){try{const abrPrevia=caixaAberto?caixaAberto.abertura:null;const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});if(error){alert('Erro ao fechar caixa: '+error.message);return;}caixaAberto=null;localStorage.removeItem('malte_caixa');try{await registrarLog('FECHAMENTO CAIXA',abrPrevia?`Aberto desde ${fmtDateFull(abrPrevia)}`:'Caixa fechado');}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
 async function verComprovante(vendaId){
   const[{data:v},{data:itens}]=await Promise.all([sb.from('vendas').select('*').eq('id',vendaId).single(),sb.from('venda_itens').select('*').eq('venda_id',vendaId)]);
   const I=itens||[];
