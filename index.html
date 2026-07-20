@@ -768,13 +768,14 @@ async function desenharFesta(){
   <div id="festa-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px;">
     ${P.map(p=>`<div class="prod-card festa-card" data-nome="${p.nome.toLowerCase()}" onclick="tocarProdutoFesta(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.em_promo&&p.preco_promo?p.preco_promo:p.preco},'${p.emoji}')">
       <div style="font-size:22px">${p.emoji}</div><div style="font-size:11px;font-weight:600">${p.nome}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:var(--gold2)">${fmt(p.em_promo&&p.preco_promo?p.preco_promo:p.preco)}</span><span class="badge badge-gold" id="festa-count-${p.id}">${festaVendidos[p.id]||0}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:var(--gold2)">${fmt(p.em_promo&&p.preco_promo?p.preco_promo:p.preco)}</span><span style="display:flex;gap:4px"><span class="badge badge-gold" id="festa-count-${p.id}" title="Vendido">${festaVendidos[p.id]||0}</span>${festaRetirados[p.id]?`<span class="badge badge-red" id="festa-ret-${p.id}" title="Retirado">-${festaRetirados[p.id]}</span>`:`<span class="badge badge-red" id="festa-ret-${p.id}" style="display:none" title="Retirado">-0</span>`}</span></div>
     </div>`).join('')}
   </div>`;
 }
 function filtrarFestaGrid(){const q=document.getElementById('festa-busca').value.toLowerCase();document.querySelectorAll('#festa-grid .festa-card').forEach(c=>{c.style.display=c.getAttribute('data-nome').includes(q)?'':'none';});}
 function atualizarContadoresFestaUI(){
   Object.keys(festaVendidos).forEach(pid=>{const el=document.getElementById('festa-count-'+pid);if(el)el.textContent=festaVendidos[pid];});
+  Object.keys(festaRetirados).forEach(pid=>{const el=document.getElementById('festa-ret-'+pid);if(el){el.textContent='-'+festaRetirados[pid];el.style.display=festaRetirados[pid]?'':'none';}});
   const sub=document.getElementById('festa-total-sub');if(sub){const totalVendidoRS=(window._festaItensCache||[]).reduce((s,i)=>s+i.preco*i.qty,0);sub.textContent='Total vendido: '+fmt(totalVendidoRS);}
 }
 async function abrirNovaFesta(){
