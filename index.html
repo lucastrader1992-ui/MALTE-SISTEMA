@@ -760,6 +760,7 @@ async function desenharFesta(){
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-secondary btn-sm" onclick="abrirRetiradaFesta()">🔒 Retirar Produto</button>
       <button class="btn btn-secondary btn-sm" id="festa-undo-btn" onclick="desfazerUltimaFesta()" ${lastFestaEvent?'':'disabled'}>↩ Desfazer última</button>
+      <button class="btn btn-secondary btn-sm" onclick="abrirCancelarFesta()" style="color:var(--red)">🗑 Cancelar Festa</button>
       <button class="btn btn-danger btn-sm" onclick="confirmarEncerrarFesta()">■ Encerrar Festa</button>
     </div>
   </div>
@@ -888,6 +889,30 @@ async function finalizarFechamentoFesta(){
     closeModal();lastFestaEvent=null;festaAtual=null;await renderFesta();
   }catch(e){alert('Erro ao encerrar festa: '+e.message);}
   finally{window._fechamentoLock=false;}
+}
+async function abrirCancelarFesta(){
+  pedirSenhaAdm('Senha do Administrador para cancelar a festa',()=>{
+    openModal(`<h3>⚠️ Cancelar Festa</h3><p style="color:var(--text2);font-size:13px;margin-bottom:14px">Isso vai apagar todas as vendas e retiradas registradas em "${festaAtual.nome}" e devolver tudo ao estoque. Essa ação não pode ser desfeita.</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Voltar</button><button class="btn btn-danger" onclick="confirmarCancelarFesta()">Cancelar Festa</button></div>`);
+  });
+}
+async function confirmarCancelarFesta(){
+  if(window._cancelFestaLock)return;window._cancelFestaLock=true;
+  try{
+    await carregarEventosFesta();
+    const itens=window._festaItensCache||[],retiradas=window._festaRetiradasCache||[];
+    const devolucoes={};
+    itens.forEach(i=>{devolucoes[i.produto_id]=(devolucoes[i.produto_id]||0)+i.qty;});
+    retiradas.forEach(r=>{devolucoes[r.produto_id]=(devolucoes[r.produto_id]||0)+r.qty;});
+    for(const pid of Object.keys(devolucoes)){
+      const{data:p}=await sb.from('produtos').select('estoque').eq('id',pid).single();
+      if(p)await sb.from('produtos').update({estoque:p.estoque+devolucoes[pid]}).eq('id',pid);
+    }
+    await sb.from('festa_itens').delete().eq('festa_id',festaAtual.id);
+    await sb.from('festa_retiradas').delete().eq('festa_id',festaAtual.id);
+    await sb.from('festas').update({status:'cancelada',fechada_em:new Date().toISOString()}).eq('id',festaAtual.id);
+    closeModal();lastFestaEvent=null;festaAtual=null;await renderFesta();
+  }catch(e){alert('Erro ao cancelar festa: '+e.message);}
+  finally{window._cancelFestaLock=false;}
 }
 async function renderEstoque(){
   stopEstoquePolling();
