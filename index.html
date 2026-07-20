@@ -208,6 +208,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <button class="nav-btn" onclick="goTab('caixa')">💰 Caixa</button>
     <button class="nav-btn" onclick="goTab('mesas')">🍺 Mesas</button>
     <button class="nav-btn" onclick="goTab('balcao')">🛒 Balcão</button>
+    <button class="nav-btn" onclick="goTab('festa')">🎉 Festa</button>
     <button class="nav-btn adm-only" onclick="goTab('estoque')">📦 Estoque</button>
     <button class="nav-btn adm-only bruno-tab" onclick="goTab('bruno')">👤 Bruno</button>
     <button class="nav-btn adm-only" onclick="goTab('produtos')">🏷️ Produtos</button>
@@ -256,8 +257,9 @@ async function carregarOperadoresLogin(){
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
 let splitPagamentos=[];
-let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null;
+let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null,festaPollingInterval=null;
 function stopGlobalPolling(){if(globalPollingInterval){clearInterval(globalPollingInterval);globalPollingInterval=null;}}
+function stopFestaPolling(){if(festaPollingInterval){clearInterval(festaPollingInterval);festaPollingInterval=null;}}
 function modalAberto(){return document.getElementById('modal-overlay').classList.contains('open')||document.getElementById('senha-overlay').classList.contains('open');}
 
 function getDiaComercial(){const agora=new Date();if(agora.getHours()<6){agora.setDate(agora.getDate()-1);}const inicio=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate(),6,0,0,0);const fim=new Date(inicio);fim.setDate(fim.getDate()+1);fim.setHours(5,59,59,999);return{inicio,fim};}
@@ -392,14 +394,14 @@ function checkSenha(){if(document.getElementById('senha-input').value===SENHAS.a
 function closeSenha(){document.getElementById('senha-overlay').classList.remove('open');senhaCallback=null;}
 
 function goTab(tab){
-  stopMesaPolling();stopEstoquePolling();stopGlobalPolling();currentTab=tab;
+  stopMesaPolling();stopEstoquePolling();stopGlobalPolling();stopFestaPolling();currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{const t=b.getAttribute('onclick')||'';if(t.includes("'"+tab+"'"))b.classList.add('active');});
   document.getElementById('tab-content').innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
   const tabs={dashboard:renderDashboard,caixa:renderCaixa,mesas:renderMesas,balcao:renderBalcao,
     estoque:renderEstoque,bruno:renderBruno,produtos:renderProdutos,financeiro:renderFinanceiro,
     compras:renderCompras,cmv:renderCMV,comissoes:renderComissoes,tarefas:renderTarefas,
-    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes};
+    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta};
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
@@ -723,6 +725,170 @@ async function finalizarBalcao(){
   catch(e){console.error(e);alert('Erro ao finalizar. Tente novamente.');}finally{window._finalizandoBalcao=false;}
 }
 
+let festaAtual=null,festaVendidos={},festaRetirados={},lastFestaEvent=null;
+async function renderFesta(){
+  stopFestaPolling();
+  const{data:fAbertas}=await sb.from('festas').select('*').eq('status','aberta').order('aberta_em',{ascending:false}).limit(1);
+  festaAtual=(fAbertas&&fAbertas[0])?fAbertas[0]:null;
+  if(!festaAtual){
+    const hoje=new Date().toLocaleDateString('pt-BR');
+    document.getElementById('tab-content').innerHTML=`<div class="empty" style="padding:60px 20px"><div class="empty-icon">🎉</div><p style="margin-bottom:14px">Nenhuma festa em andamento</p>
+    <input type="text" id="festa-nome-input" placeholder="Nome da festa" value="Festa ${hoje}" style="width:260px;margin:0 auto 12px;display:block;text-align:center;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px;color:var(--text)">
+    <button class="btn btn-primary" onclick="abrirNovaFesta()" style="margin:0 auto">▶ Abrir Festa</button></div>`;
+    return;
+  }
+  await carregarEventosFesta();
+  await desenharFesta();
+  festaPollingInterval=setInterval(async()=>{if(currentTab!=='festa')return stopFestaPolling();if(modalAberto())return;await carregarEventosFesta();atualizarContadoresFestaUI();},7000);
+}
+async function carregarEventosFesta(){
+  if(!festaAtual)return;
+  const[{data:itens},{data:retiradas}]=await Promise.all([
+    sb.from('festa_itens').select('*').eq('festa_id',festaAtual.id),
+    sb.from('festa_retiradas').select('*').eq('festa_id',festaAtual.id)
+  ]);
+  festaVendidos={};(itens||[]).forEach(i=>{festaVendidos[i.produto_id]=(festaVendidos[i.produto_id]||0)+i.qty;});
+  festaRetirados={};(retiradas||[]).forEach(r=>{festaRetirados[r.produto_id]=(festaRetirados[r.produto_id]||0)+r.qty;});
+  window._festaItensCache=itens||[];window._festaRetiradasCache=retiradas||[];
+}
+async function desenharFesta(){
+  const{data:prods}=await sb.from('produtos').select('*').order('nome');const P=prods||[];
+  const totalVendidoRS=(window._festaItensCache||[]).reduce((s,i)=>s+i.preco*i.qty,0);
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr">
+    <div><div class="section-title">🎉 ${festaAtual.nome}</div><div class="section-sub" id="festa-total-sub">Total vendido: ${fmt(totalVendidoRS)}</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="abrirRetiradaFesta()">🔒 Retirar Produto</button>
+      <button class="btn btn-secondary btn-sm" id="festa-undo-btn" onclick="desfazerUltimaFesta()" ${lastFestaEvent?'':'disabled'}>↩ Desfazer última</button>
+      <button class="btn btn-danger btn-sm" onclick="confirmarEncerrarFesta()">■ Encerrar Festa</button>
+    </div>
+  </div>
+  <input type="text" id="festa-busca" placeholder="🔎 Buscar produto..." oninput="filtrarFestaGrid()" style="width:100%;margin-bottom:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px;color:var(--text)">
+  <div id="festa-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px;">
+    ${P.map(p=>`<div class="prod-card festa-card" data-nome="${p.nome.toLowerCase()}" onclick="tocarProdutoFesta(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.em_promo&&p.preco_promo?p.preco_promo:p.preco},'${p.emoji}')">
+      <div style="font-size:22px">${p.emoji}</div><div style="font-size:11px;font-weight:600">${p.nome}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:var(--gold2)">${fmt(p.em_promo&&p.preco_promo?p.preco_promo:p.preco)}</span><span class="badge badge-gold" id="festa-count-${p.id}">${festaVendidos[p.id]||0}</span></div>
+    </div>`).join('')}
+  </div>`;
+}
+function filtrarFestaGrid(){const q=document.getElementById('festa-busca').value.toLowerCase();document.querySelectorAll('#festa-grid .festa-card').forEach(c=>{c.style.display=c.getAttribute('data-nome').includes(q)?'':'none';});}
+function atualizarContadoresFestaUI(){
+  Object.keys(festaVendidos).forEach(pid=>{const el=document.getElementById('festa-count-'+pid);if(el)el.textContent=festaVendidos[pid];});
+  const sub=document.getElementById('festa-total-sub');if(sub){const totalVendidoRS=(window._festaItensCache||[]).reduce((s,i)=>s+i.preco*i.qty,0);sub.textContent='Total vendido: '+fmt(totalVendidoRS);}
+}
+async function abrirNovaFesta(){
+  const nomeEl=document.getElementById('festa-nome-input');const nome=(nomeEl&&nomeEl.value.trim())||('Festa '+new Date().toLocaleDateString('pt-BR'));
+  const{data:prods}=await sb.from('produtos').select('id,estoque');
+  const snapshot={};(prods||[]).forEach(p=>{snapshot[p.id]=p.estoque;});
+  try{
+    const{data:nova,error}=await sb.from('festas').insert({nome,status:'aberta',aberto_por:currentUser.nome,estoque_inicial:snapshot}).select().single();
+    if(error)throw error;
+    festaAtual=nova;lastFestaEvent=null;renderFesta();
+  }catch(e){alert('Erro ao abrir festa: '+e.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE festas DISABLE ROW LEVEL SECURITY;');}
+}
+async function tocarProdutoFesta(prodId,nome,preco,emoji){
+  if(!festaAtual||window._festaTapLock)return;window._festaTapLock=true;
+  try{
+    const{data:item,error}=await sb.from('festa_itens').insert({festa_id:festaAtual.id,produto_id:prodId,produto_nome:nome,emoji,preco,qty:1}).select().single();
+    if(error)throw error;
+    const{data:p}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
+    if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-1)}).eq('id',prodId);
+    festaVendidos[prodId]=(festaVendidos[prodId]||0)+1;
+    window._festaItensCache=window._festaItensCache||[];window._festaItensCache.push(item);
+    lastFestaEvent={type:'venda',id:item.id,produto_id:prodId,qty:1};
+    const badge=document.getElementById('festa-count-'+prodId);if(badge)badge.textContent=festaVendidos[prodId];
+    const undoBtn=document.getElementById('festa-undo-btn');if(undoBtn)undoBtn.removeAttribute('disabled');
+    const sub=document.getElementById('festa-total-sub');if(sub){const totalVendidoRS=window._festaItensCache.reduce((s,i)=>s+i.preco*i.qty,0);sub.textContent='Total vendido: '+fmt(totalVendidoRS);}
+  }catch(e){console.error(e);alert('Erro ao registrar venda: '+e.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE festa_itens DISABLE ROW LEVEL SECURITY;');}
+  finally{window._festaTapLock=false;}
+}
+async function desfazerUltimaFesta(){
+  if(!lastFestaEvent)return;
+  try{
+    if(lastFestaEvent.type==='venda'){
+      await sb.from('festa_itens').delete().eq('id',lastFestaEvent.id);
+      const{data:p}=await sb.from('produtos').select('estoque').eq('id',lastFestaEvent.produto_id).single();
+      if(p)await sb.from('produtos').update({estoque:p.estoque+lastFestaEvent.qty}).eq('id',lastFestaEvent.produto_id);
+      festaVendidos[lastFestaEvent.produto_id]=Math.max(0,(festaVendidos[lastFestaEvent.produto_id]||1)-lastFestaEvent.qty);
+      window._festaItensCache=(window._festaItensCache||[]).filter(i=>i.id!==lastFestaEvent.id);
+    }
+    lastFestaEvent=null;
+    await desenharFesta();
+  }catch(e){alert('Erro ao desfazer: '+e.message);}
+}
+async function abrirRetiradaFesta(){
+  pedirSenhaAdm('Senha do Administrador para retirar produto',async()=>{
+    const{data:prods}=await sb.from('produtos').select('*').order('nome');const P=prods||[];
+    openModal(`<h3>🔒 Retirar Produto (Festa)</h3><p style="color:var(--text2);font-size:13px;margin-bottom:14px">Cortesia, quebra ou autoconsumo — será descontado do estoque.</p>
+    <select id="festa-retirada-produto" style="width:100%;margin-bottom:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px;color:var(--text)">${P.map(p=>`<option value="${p.id}" data-nome="${p.nome}">${p.emoji} ${p.nome} (estoque: ${p.estoque})</option>`).join('')}</select>
+    <input type="number" id="festa-retirada-qty" min="1" value="1" placeholder="Quantidade" style="width:100%;margin-bottom:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px;color:var(--text)">
+    <input type="text" id="festa-retirada-motivo" placeholder="Motivo (cortesia, quebra, etc)" style="width:100%;margin-bottom:14px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:10px;color:var(--text)">
+    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" onclick="confirmarRetiradaFesta()">Retirar</button></div>`);
+  });
+}
+async function confirmarRetiradaFesta(){
+  if(window._retiradaLock)return;window._retiradaLock=true;
+  try{
+    const sel=document.getElementById('festa-retirada-produto');const prodId=Number(sel.value);const nome=sel.options[sel.selectedIndex].getAttribute('data-nome');
+    const qty=Math.max(1,Number(document.getElementById('festa-retirada-qty').value)||1);
+    const motivo=document.getElementById('festa-retirada-motivo').value.trim()||'Não informado';
+    await sb.from('festa_retiradas').insert({festa_id:festaAtual.id,produto_id:prodId,produto_nome:nome,qty,motivo,autorizado_por:currentUser.nome});
+    const{data:p}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
+    if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-qty)}).eq('id',prodId);
+    closeModal();await carregarEventosFesta();await desenharFesta();
+  }catch(e){alert('Erro ao retirar produto: '+e.message);}
+  finally{window._retiradaLock=false;}
+}
+async function confirmarEncerrarFesta(){
+  await carregarEventosFesta();
+  const{data:prods}=await sb.from('produtos').select('*');const prodMap={};(prods||[]).forEach(p=>prodMap[p.id]=p);
+  const inicial=festaAtual.estoque_inicial||{};
+  const idsRelevantes=new Set([...Object.keys(festaVendidos),...Object.keys(festaRetirados)].map(Number));
+  const linhas=[...idsRelevantes].map(pid=>{
+    const p=prodMap[pid]||{nome:'Produto #'+pid,emoji:''};
+    const vend=festaVendidos[pid]||0,ret=festaRetirados[pid]||0;
+    const ini=inicial[pid]!=null?inicial[pid]:(p.estoque+vend+ret);
+    const atual=p.estoque!=null?p.estoque:0;
+    const esperado=ini-vend-ret;
+    const diffSistema=esperado-atual;
+    return{pid,nome:p.nome,emoji:p.emoji,vend,ret,ini,atual,esperado,diffSistema};
+  });
+  const linhasHtml=linhas.map(l=>`<tr>
+    <td>${l.emoji||''} ${l.nome}</td><td style="text-align:center">${l.vend}</td><td style="text-align:center">${l.ret}</td>
+    <td style="text-align:center">${l.ini}</td><td style="text-align:center">${l.atual}</td>
+    <td style="text-align:center;color:${l.diffSistema!==0?'var(--red)':'var(--green)'}">${l.diffSistema>0?'−'+l.diffSistema:(l.diffSistema<0?'+'+Math.abs(l.diffSistema):'✓ 0')}</td>
+    <td><input type="number" class="festa-contagem-input" data-pid="${l.pid}" placeholder="contar" style="width:70px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 6px;color:var(--text)"></td>
+  </tr>`).join('');
+  openModal(`<h3>■ Encerrar ${festaAtual.nome}</h3>
+  <p style="color:var(--text2);font-size:12px;margin-bottom:10px">Confira abaixo. "Dif. Sistema" mostra se algo mexeu no estoque fora da Festa (entrada, ajuste, etc). Preencha "Contagem Física" para conferir perda/sobra real.</p>
+  <div style="max-height:340px;overflow-y:auto;margin-bottom:14px;">
+  <table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="color:var(--text2);text-align:center"><th style="text-align:left">Produto</th><th>Vendido</th><th>Retirado</th><th>Estoque Inicial</th><th>Estoque Atual</th><th>Dif. Sistema</th><th>Contagem Física</th></tr></thead>
+  <tbody>${linhasHtml||'<tr><td colspan="7" style="text-align:center;color:var(--text2);padding:14px">Nenhum produto movimentado nesta festa.</td></tr>'}</tbody></table>
+  </div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Voltar</button><button class="btn btn-primary" onclick="finalizarFechamentoFesta()">✓ Confirmar Fechamento</button></div>`);
+}
+async function finalizarFechamentoFesta(){
+  if(window._fechamentoLock)return;window._fechamentoLock=true;
+  try{
+    const inputs=document.querySelectorAll('.festa-contagem-input');
+    const contagens={};inputs.forEach(i=>{if(i.value!=='')contagens[i.getAttribute('data-pid')]=Number(i.value);});
+    const{data:prods}=await sb.from('produtos').select('*');const prodMap={};(prods||[]).forEach(p=>prodMap[p.id]=p);
+    const inicial=festaAtual.estoque_inicial||{};
+    const idsRelevantes=new Set([...Object.keys(festaVendidos),...Object.keys(festaRetirados)].map(Number));
+    const relatorio=[...idsRelevantes].map(pid=>{
+      const p=prodMap[pid]||{nome:'Produto #'+pid};
+      const vend=festaVendidos[pid]||0,ret=festaRetirados[pid]||0;
+      const ini=inicial[pid]!=null?inicial[pid]:(p.estoque+vend+ret);
+      const atual=p.estoque!=null?p.estoque:0;
+      const esperado=ini-vend-ret;
+      const contagem=contagens[pid]!=null?contagens[pid]:null;
+      return{produto_id:pid,nome:p.nome,vendido:vend,retirado:ret,estoque_inicial:ini,estoque_atual:atual,esperado,dif_sistema:esperado-atual,contagem_fisica:contagem,dif_fisica:contagem!=null?contagem-atual:null};
+    });
+    await sb.from('festas').update({status:'fechada',fechada_em:new Date().toISOString(),fechamento:relatorio}).eq('id',festaAtual.id);
+    closeModal();lastFestaEvent=null;festaAtual=null;await renderFesta();
+  }catch(e){alert('Erro ao encerrar festa: '+e.message);}
+  finally{window._fechamentoLock=false;}
+}
 async function renderEstoque(){
   stopEstoquePolling();
   document.getElementById('tab-content').innerHTML=`<div class="section-hdr"><div><div class="section-title">📦 Controle de Estoque</div><div class="section-sub" id="estoque-ultima-atualizacao">Carregando...</div></div><button class="btn btn-primary btn-sm" onclick="abrirEntrada()">+ Entrada</button></div><div id="estoque-tabela-wrap"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
