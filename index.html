@@ -834,11 +834,13 @@ async function confirmarRetiradaFesta(){
     const sel=document.getElementById('festa-retirada-produto');const prodId=Number(sel.value);const nome=sel.options[sel.selectedIndex].getAttribute('data-nome');
     const qty=Math.max(1,Number(document.getElementById('festa-retirada-qty').value)||1);
     const motivo=document.getElementById('festa-retirada-motivo').value.trim()||'Não informado';
-    await sb.from('festa_retiradas').insert({festa_id:festaAtual.id,produto_id:prodId,produto_nome:nome,qty,motivo,autorizado_por:currentUser.nome});
+    const{error:eRet}=await sb.from('festa_retiradas').insert({festa_id:festaAtual.id,produto_id:prodId,produto_nome:nome,qty,motivo,autorizado_por:currentUser.nome});
+    if(eRet)throw eRet;
     const{data:p}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
     if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-qty)}).eq('id',prodId);
     closeModal();await carregarEventosFesta();await desenharFesta();
-  }catch(e){alert('Erro ao retirar produto: '+e.message);}
+    alert('✓ Retirada registrada: '+qty+'x '+nome);
+  }catch(e){alert('Erro ao retirar produto: '+e.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE festa_retiradas DISABLE ROW LEVEL SECURITY;');}
   finally{window._retiradaLock=false;}
 }
 async function confirmarEncerrarFesta(){
