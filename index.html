@@ -843,53 +843,142 @@ async function confirmarRetiradaFesta(){
   }catch(e){alert('Erro ao retirar produto: '+e.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE festa_retiradas DISABLE ROW LEVEL SECURITY;');}
   finally{window._retiradaLock=false;}
 }
+let festaPerdasTemp=[];
 async function confirmarEncerrarFesta(){
+  festaPerdasTemp=[];
   await carregarEventosFesta();
-  const{data:prods}=await sb.from('produtos').select('*');const prodMap={};(prods||[]).forEach(p=>prodMap[p.id]=p);
+  const{data:caixaData}=await sb.from('caixa_status').select('*').eq('id',1).maybeSingle();
+  window._festaCaixaAbertoAtual=!!(caixaData&&caixaData.aberto);
+  const{data:prodsAll}=await sb.from('produtos').select('*').order('nome');
+  window._festaProdutosCache=prodsAll||[];
+  openModal(gerarModalEncerrarFestaHtml());
+  setTimeout(atualizarDiffPagamentoFesta,50);
+}
+function gerarModalEncerrarFestaHtml(){
+  const P=window._festaProdutosCache||[];const prodMap={};P.forEach(p=>prodMap[p.id]=p);
   const inicial=festaAtual.estoque_inicial||{};
-  const idsRelevantes=new Set([...Object.keys(festaVendidos),...Object.keys(festaRetirados)].map(Number));
+  const perdasTempByProd={};festaPerdasTemp.forEach(pr=>{perdasTempByProd[pr.produto_id]=(perdasTempByProd[pr.produto_id]||0)+pr.qty;});
+  const idsRelevantes=new Set([...Object.keys(festaVendidos),...Object.keys(festaRetirados),...Object.keys(perdasTempByProd)].map(Number));
   const linhas=[...idsRelevantes].map(pid=>{
     const p=prodMap[pid]||{nome:'Produto #'+pid,emoji:''};
-    const vend=festaVendidos[pid]||0,ret=festaRetirados[pid]||0;
-    const ini=inicial[pid]!=null?inicial[pid]:(p.estoque+vend+ret);
-    const atual=p.estoque!=null?p.estoque:0;
-    const esperado=ini-vend-ret;
-    const diffSistema=esperado-atual;
-    return{pid,nome:p.nome,emoji:p.emoji,vend,ret,ini,atual,esperado,diffSistema};
+    const vend=festaVendidos[pid]||0,ret=festaRetirados[pid]||0,perda=perdasTempByProd[pid]||0;
+    const ini=inicial[pid]!=null?inicial[pid]:(p.estoque+vend+ret+perda);
+    const atualReal=p.estoque!=null?p.estoque:0;
+    const atualProjetado=atualReal-perda;
+    const esperado=ini-vend-ret-perda;
+    const diffSistema=esperado-atualProjetado;
+    return{pid,nome:p.nome,emoji:p.emoji,vend,ret,perda,ini,atual:atualProjetado,esperado,diffSistema};
   });
   const linhasHtml=linhas.map(l=>`<tr>
-    <td>${l.emoji||''} ${l.nome}</td><td style="text-align:center">${l.vend}</td><td style="text-align:center">${l.ret}</td>
+    <td>${l.emoji||''} ${l.nome}</td><td style="text-align:center">${l.vend}</td><td style="text-align:center">${l.ret}</td><td style="text-align:center">${l.perda}</td>
     <td style="text-align:center">${l.ini}</td><td style="text-align:center">${l.atual}</td>
     <td style="text-align:center;color:${l.diffSistema!==0?'var(--red)':'var(--green)'}">${l.diffSistema>0?'−'+l.diffSistema:(l.diffSistema<0?'+'+Math.abs(l.diffSistema):'✓ 0')}</td>
     <td><input type="number" class="festa-contagem-input" data-pid="${l.pid}" placeholder="contar" style="width:70px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 6px;color:var(--text)"></td>
   </tr>`).join('');
-  openModal(`<h3>■ Encerrar ${festaAtual.nome}</h3>
-  <p style="color:var(--text2);font-size:12px;margin-bottom:10px">Confira abaixo. "Dif. Sistema" mostra se algo mexeu no estoque fora da Festa (entrada, ajuste, etc). Preencha "Contagem Física" para conferir perda/sobra real.</p>
-  <div style="max-height:340px;overflow-y:auto;margin-bottom:14px;">
-  <table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="color:var(--text2);text-align:center"><th style="text-align:left">Produto</th><th>Vendido</th><th>Retirado</th><th>Estoque Inicial</th><th>Estoque Atual</th><th>Dif. Sistema</th><th>Contagem Física</th></tr></thead>
-  <tbody>${linhasHtml||'<tr><td colspan="7" style="text-align:center;color:var(--text2);padding:14px">Nenhum produto movimentado nesta festa.</td></tr>'}</tbody></table>
+  const totalVendidoRS=(window._festaItensCache||[]).reduce((s,i)=>s+i.preco*i.qty,0);
+  const perdasListHtml=festaPerdasTemp.map((pr,idx)=>`<div class="item-row"><div style="font-size:12px">${pr.nome} — ${pr.qty}un — <span style="color:var(--text2)">${pr.motivo}</span></div><button class="btn btn-danger btn-xs" onclick="removerPerdaFestaTemp(${idx})">−</button></div>`).join('')||'<div style="color:var(--text2);font-size:12px">Nenhuma perda registrada</div>';
+  return`<h3>■ Encerrar ${festaAtual.nome}</h3>
+  <div style="margin-bottom:16px;">
+    <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px">🗑 Perdas da Festa</div>
+    <div id="festa-perdas-lista" style="margin-bottom:8px;">${perdasListHtml}</div>
+    <div style="display:grid;grid-template-columns:2fr 0.7fr 1.6fr auto;gap:6px;">
+      <select id="festa-perda-prod" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:6px;color:var(--text);font-size:12px;">${P.map(p=>`<option value="${p.id}" data-nome="${p.nome.replace(/"/g,'&quot;')}" data-custo="${p.custo||0}">${p.emoji} ${p.nome}</option>`).join('')}</select>
+      <input type="number" id="festa-perda-qty" value="1" min="1" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:6px;color:var(--text);font-size:12px;">
+      <input type="text" id="festa-perda-motivo" placeholder="Motivo (quebra, etc)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:6px;color:var(--text);font-size:12px;">
+      <button class="btn btn-secondary btn-xs" onclick="adicionarPerdaFestaTemp()">+ Add</button>
+    </div>
   </div>
-  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Voltar</button><button class="btn btn-primary" onclick="finalizarFechamentoFesta()">✓ Confirmar Fechamento</button></div>`);
+  <div style="margin-bottom:16px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">📦 Conferência de Estoque</div>
+    <p style="color:var(--text2);font-size:11px;margin-bottom:8px">"Dif. Sistema" mostra se algo mexeu no estoque fora da Festa. Preencha "Contagem Física" pra conferir na prática.</p>
+    <div style="max-height:260px;overflow-y:auto;">
+    <table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="color:var(--text2);text-align:center"><th style="text-align:left">Produto</th><th>Vendido</th><th>Retirado</th><th>Perda</th><th>Est. Inicial</th><th>Est. Atual</th><th>Dif. Sistema</th><th>Contagem</th></tr></thead>
+    <tbody>${linhasHtml||'<tr><td colspan="8" style="text-align:center;color:var(--text2);padding:14px">Nenhum produto movimentado nesta festa.</td></tr>'}</tbody></table>
+    </div>
+  </div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">💰 Fechamento Financeiro — Total vendido: <span style="color:var(--gold2)">${fmt(totalVendidoRS)}</span></div>
+    ${!window._festaCaixaAbertoAtual?`<div style="background:var(--redl);border:1px solid rgba(192,57,43,0.3);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;">
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><input type="checkbox" id="festa-abrir-caixa-chk" checked> Caixa está fechado — abrir caixa do dia junto com o fechamento</label>
+      <input type="number" id="festa-troco-inicial" placeholder="Troco inicial (R$)" value="0" step="0.01" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:6px;color:var(--text);">
+    </div>`:'<div style="font-size:11px;color:var(--text2);margin-bottom:8px">✓ Caixa já está aberto — as vendas da festa entram direto nele.</div>'}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+      <div class="modal-field"><label>💵 Dinheiro</label><input type="number" id="festa-pag-dinheiro" value="0" step="0.01" oninput="atualizarDiffPagamentoFesta()"></div>
+      <div class="modal-field"><label>💳 Cartão</label><input type="number" id="festa-pag-cartao" value="0" step="0.01" oninput="atualizarDiffPagamentoFesta()"></div>
+      <div class="modal-field"><label>📱 Pix</label><input type="number" id="festa-pag-pix" value="0" step="0.01" oninput="atualizarDiffPagamentoFesta()"></div>
+    </div>
+    <div id="festa-pag-diff" style="font-size:12px;margin-top:6px;color:var(--text2)"></div>
+  </div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Voltar</button><button class="btn btn-primary" onclick="finalizarFechamentoFesta()">✓ Confirmar Fechamento</button></div>`;
+}
+function atualizarDiffPagamentoFesta(){
+  const totalVendido=(window._festaItensCache||[]).reduce((s,i)=>s+i.preco*i.qty,0);
+  const d=parseFloat(document.getElementById('festa-pag-dinheiro')?.value)||0;
+  const c=parseFloat(document.getElementById('festa-pag-cartao')?.value)||0;
+  const p=parseFloat(document.getElementById('festa-pag-pix')?.value)||0;
+  const diff=totalVendido-(d+c+p);
+  const el=document.getElementById('festa-pag-diff');
+  if(!el)return;
+  el.innerHTML=Math.abs(diff)<0.005?'<span style="color:var(--green)">✓ Bate com o total vendido</span>':`<span style="color:var(--red)">Diferença: ${fmt(Math.abs(diff))} ${diff>0?'(falta informar)':'(a mais do que vendeu)'}</span>`;
+}
+function adicionarPerdaFestaTemp(){
+  const sel=document.getElementById('festa-perda-prod');if(!sel||!sel.value)return;
+  const pid=Number(sel.value);const nome=sel.options[sel.selectedIndex].getAttribute('data-nome');
+  const custo=parseFloat(sel.options[sel.selectedIndex].getAttribute('data-custo'))||0;
+  const qty=Math.max(1,Number(document.getElementById('festa-perda-qty').value)||1);
+  const motivo=document.getElementById('festa-perda-motivo').value.trim()||'Quebra';
+  festaPerdasTemp.push({produto_id:pid,nome,qty,custo_unit:custo,motivo});
+  document.getElementById('modal-content').innerHTML=gerarModalEncerrarFestaHtml();
+  setTimeout(atualizarDiffPagamentoFesta,50);
+}
+function removerPerdaFestaTemp(idx){
+  festaPerdasTemp.splice(idx,1);
+  document.getElementById('modal-content').innerHTML=gerarModalEncerrarFestaHtml();
+  setTimeout(atualizarDiffPagamentoFesta,50);
 }
 async function finalizarFechamentoFesta(){
   if(window._fechamentoLock)return;window._fechamentoLock=true;
   try{
+    for(const pr of festaPerdasTemp){
+      const custoTotal=pr.qty*pr.custo_unit;
+      const{error:ePerda}=await sb.from('perdas').insert({produto:pr.nome,qty:pr.qty,custo_unit:pr.custo_unit,custo_total:custoTotal,motivo:pr.motivo,observacao:'Festa: '+festaAtual.nome,operador:currentUser.nome,criado_em:new Date().toISOString()});
+      if(ePerda)throw new Error('Erro ao registrar perda de '+pr.nome+': '+ePerda.message);
+      const{data:pAtual}=await sb.from('produtos').select('estoque').eq('id',pr.produto_id).single();
+      if(pAtual)await sb.from('produtos').update({estoque:Math.max(0,pAtual.estoque-pr.qty)}).eq('id',pr.produto_id);
+    }
+    const dinheiro=parseFloat(document.getElementById('festa-pag-dinheiro')?.value)||0;
+    const cartao=parseFloat(document.getElementById('festa-pag-cartao')?.value)||0;
+    const pix=parseFloat(document.getElementById('festa-pag-pix')?.value)||0;
+    const pagamentos=[{metodo:'dinheiro',valor:dinheiro},{metodo:'cartao',valor:cartao},{metodo:'pix',valor:pix}].filter(p=>p.valor>0);
+    for(const pg of pagamentos){
+      const{error:eVenda}=await sb.from('vendas').insert({tipo:'Festa - '+festaAtual.nome,total:pg.valor,pagamento:pg.metodo,operador:currentUser.nome});
+      if(eVenda)throw new Error('Erro ao lançar venda no caixa ('+pg.metodo+'): '+eVenda.message);
+    }
+    const chkAbrir=document.getElementById('festa-abrir-caixa-chk');
+    if(chkAbrir&&chkAbrir.checked){
+      const troco=parseFloat(document.getElementById('festa-troco-inicial')?.value)||0;
+      const{error:eCaixa}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:new Date().toISOString(),troco,operador:currentUser.nome});
+      if(eCaixa)throw new Error('Erro ao abrir caixa: '+eCaixa.message);
+    }
     const inputs=document.querySelectorAll('.festa-contagem-input');
     const contagens={};inputs.forEach(i=>{if(i.value!=='')contagens[i.getAttribute('data-pid')]=Number(i.value);});
     const{data:prods}=await sb.from('produtos').select('*');const prodMap={};(prods||[]).forEach(p=>prodMap[p.id]=p);
     const inicial=festaAtual.estoque_inicial||{};
-    const idsRelevantes=new Set([...Object.keys(festaVendidos),...Object.keys(festaRetirados)].map(Number));
+    const idsRelevantes=new Set([...Object.keys(festaVendidos),...Object.keys(festaRetirados),...festaPerdasTemp.map(p=>p.produto_id)].map(Number));
     const relatorio=[...idsRelevantes].map(pid=>{
       const p=prodMap[pid]||{nome:'Produto #'+pid};
       const vend=festaVendidos[pid]||0,ret=festaRetirados[pid]||0;
-      const ini=inicial[pid]!=null?inicial[pid]:(p.estoque+vend+ret);
+      const perda=festaPerdasTemp.filter(x=>x.produto_id===pid).reduce((s,x)=>s+x.qty,0);
+      const ini=inicial[pid]!=null?inicial[pid]:(p.estoque+vend+ret+perda);
       const atual=p.estoque!=null?p.estoque:0;
-      const esperado=ini-vend-ret;
+      const esperado=ini-vend-ret-perda;
       const contagem=contagens[pid]!=null?contagens[pid]:null;
-      return{produto_id:pid,nome:p.nome,vendido:vend,retirado:ret,estoque_inicial:ini,estoque_atual:atual,esperado,dif_sistema:esperado-atual,contagem_fisica:contagem,dif_fisica:contagem!=null?contagem-atual:null};
+      return{produto_id:pid,nome:p.nome,vendido:vend,retirado:ret,perdido:perda,estoque_inicial:ini,estoque_atual:atual,esperado,dif_sistema:esperado-atual,contagem_fisica:contagem,dif_fisica:contagem!=null?contagem-atual:null};
     });
-    await sb.from('festas').update({status:'fechada',fechada_em:new Date().toISOString(),fechamento:relatorio}).eq('id',festaAtual.id);
-    closeModal();lastFestaEvent=null;festaAtual=null;await renderFesta();
+    const fechamentoCompleto={produtos:relatorio,pagamentos:{dinheiro,cartao,pix},caixa_aberto_no_fechamento:!!(chkAbrir&&chkAbrir.checked)};
+    await sb.from('festas').update({status:'fechada',fechada_em:new Date().toISOString(),fechamento:fechamentoCompleto}).eq('id',festaAtual.id);
+    festaPerdasTemp=[];closeModal();lastFestaEvent=null;festaAtual=null;await renderFesta();
+    alert('✓ Festa encerrada! Vendas lançadas no Caixa.');
   }catch(e){alert('Erro ao encerrar festa: '+e.message);}
   finally{window._fechamentoLock=false;}
 }
