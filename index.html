@@ -478,6 +478,14 @@ async function renderCaixa(){
     <button class="btn btn-primary btn-sm" onclick="carregarCaixaDia()">🔍 Ver</button>
     <button class="btn btn-secondary btn-sm" onclick="document.getElementById('caixa-data-sel').value='${hoje}';carregarCaixaDia()">📌 Hoje</button>
   </div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span style="font-size:13px;font-weight:600;color:var(--teal)">📊 Consultar período:</span>
+    <input type="date" id="caixa-periodo-inicio" value="${hoje}" style="padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+    <span style="color:var(--text2);font-size:12px">até</span>
+    <input type="date" id="caixa-periodo-fim" value="${hoje}" style="padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+    <button class="btn btn-teal btn-sm" onclick="carregarCaixaPeriodo()">🔍 Ver Período</button>
+  </div>
+  <div id="caixa-periodo-conteudo"></div>
   <div id="caixa-dia-conteudo"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
   await carregarCaixaDia();
 }
@@ -549,6 +557,51 @@ async function carregarCaixaDia(){
   <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comp.</th></tr></thead>
     <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td><td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">&#129534;</button></td></tr>`).join('')}</tbody>
   </table></div>`}`;
+}
+async function carregarCaixaPeriodo(){
+  const selI=document.getElementById('caixa-periodo-inicio');const selF=document.getElementById('caixa-periodo-fim');
+  const dataIni=selI?selI.value:new Date().toISOString().split('T')[0];
+  const dataFimStr=selF?selF.value:dataIni;
+  const el=document.getElementById('caixa-periodo-conteudo');if(!el)return;
+  if(dataFimStr<dataIni){el.innerHTML='<div class="empty" style="padding:20px"><p style="color:var(--red)">A data final não pode ser antes da data inicial.</p></div>';return;}
+  el.innerHTML='<div class="empty" style="padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
+  const tsInicio=new Date(`${dataIni}T06:00:00`).toISOString();
+  const dtFim=new Date(`${dataFimStr}T06:00:00`);dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);const tsFim=dtFim.toISOString();
+  const[{data:V},{data:S},{data:PR}]=await Promise.all([
+    sb.from('vendas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim).order('criado_em',{ascending:true}),
+    sb.from('saidas_caixa').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim),
+    sb.from('perdas').select('*').gte('criado_em',tsInicio).lte('criado_em',tsFim)
+  ]);
+  const vendas=V||[],saidas=S||[],perdas=PR||[];
+  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
+  const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
+  const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  // agrupa por dia (considerando o dia comercial começando às 06:00, igual ao resto do sistema)
+  const porDia={};
+  vendas.forEach(v=>{
+    const dt=new Date(v.criado_em);const ref=new Date(dt);if(dt.getHours()<6)ref.setDate(ref.getDate()-1);
+    const chave=ref.toISOString().split('T')[0];
+    porDia[chave]=(porDia[chave]||0)+Number(v.total);
+  });
+  const diasOrdenados=Object.keys(porDia).sort();
+  const diasHtml=diasOrdenados.map(d=>`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td style="text-align:right;font-weight:600;color:var(--gold2)">${fmt(porDia[d])}</td></tr>`).join('');
+  el.innerHTML=`
+  <div class="section-hdr"><div><div class="section-title">📊 Período: ${fmtDateOnly(dataIni+'T12:00:00')} até ${fmtDateOnly(dataFimStr+'T12:00:00')}</div><div class="section-sub">${vendas.length} transações no período</div></div></div>
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Total Vendido</div><div class="stat-value">${fmt(totalVendas)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Saídas</div><div class="stat-value">${fmt(totalSaidas)}</div></div>
+    <div class="stat-card ${totalVendas-totalSaidas>=0?'stat-green':'stat-red'}"><div class="stat-label">Saldo</div><div class="stat-value">${fmt(totalVendas-totalSaidas)}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Dinheiro</div><div class="stat-value">${fmt(porPag['dinheiro']||0)}</div></div>
+    <div class="stat-card stat-blue"><div class="stat-label">PIX</div><div class="stat-value">${fmt(porPag['pix']||0)}</div></div>
+    <div class="stat-card"><div class="stat-label">Cartões</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
+    <div class="stat-card" style="border-color:rgba(192,57,43,0.4)"><div class="stat-label">🗑 Perdas (custo)</div><div class="stat-value" style="color:var(--red)">${fmt(totalPerdasCusto)}</div></div>
+  </div>
+  ${diasOrdenados.length===0?'':`
+  <div class="section-hdr" style="margin-top:6px"><div class="section-title" style="font-size:14px">Total vendido por dia</div></div>
+  <div class="table-wrap" style="margin-bottom:22px"><table><thead><tr><th>Dia</th><th style="text-align:right">Total Vendido</th></tr></thead>
+  <tbody>${diasHtml}</tbody></table></div>`}
+  <div style="border-bottom:1px solid var(--border);margin-bottom:18px"></div>`;
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
 async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));try{await registrarLog('ABERTURA CAIXA',`Troco inicial: ${fmt(troco)}`);}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
