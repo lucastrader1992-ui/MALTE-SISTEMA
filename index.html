@@ -511,13 +511,20 @@ async function carregarCaixaDia(){
     return;
   }
   const vendas=V||[];const saidas=S||[];const perdas=PR||[];const logsCaixa=LG||[];
+  let itensPorVenda={};
+  if(vendas.length>0){
+    try{
+      const{data:VI,error:eVI}=await sb.from('venda_itens').select('*').in('venda_id',vendas.map(v=>v.id));
+      if(!eVI)(VI||[]).forEach(i=>{if(!itensPorVenda[i.venda_id])itensPorVenda[i.venda_id]=[];itensPorVenda[i.venda_id].push(i);});
+    }catch(e){}
+  }
   const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
   const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
   const totalPerdasQty=perdas.reduce((s,p)=>s+Number(p.qty),0);
   const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
   const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
   const el=document.getElementById('caixa-dia-conteudo');if(!el)return;
-  window._caixaDiaCache={data,vendas,saidas,perdas,logsCaixa,totalVendas,totalSaidas,totalPerdasQty,totalPerdasCusto,porPag};
+  window._caixaDiaCache={data,vendas,saidas,perdas,logsCaixa,totalVendas,totalSaidas,totalPerdasQty,totalPerdasCusto,porPag,itensPorVenda};
   const logHtml=logsCaixa.length===0?'':`
   <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;">
     <div style="font-size:12px;font-weight:700;color:var(--gold2);margin-bottom:6px;">&#128272; Abertura/Fechamento do Caixa</div>
@@ -565,8 +572,8 @@ async function carregarCaixaDia(){
 
   ${vendas.length===0?`<div class="empty"><div class="empty-icon">&#128205;</div><p>Nenhuma venda neste dia</p></div>`:`
   <div class="section-hdr"><div class="section-title">Vendas do Dia</div><span style="font-size:11px;color:var(--text2)">${vendas.length} transações</span></div>
-  <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comp.</th></tr></thead>
-    <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td><td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">&#129534;</button></td></tr>`).join('')}</tbody>
+  <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Produtos</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comp.</th></tr></thead>
+    <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td style="font-size:11px;color:var(--text2)">${(itensPorVenda[v.id]||[]).length?(itensPorVenda[v.id]||[]).map(i=>`${i.qty}x ${i.nome}`).join(', '):'—'}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td><td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">&#129534;</button></td></tr>`).join('')}</tbody>
   </table></div>`}`;
 }
 async function carregarCaixaPeriodo(){
@@ -589,6 +596,13 @@ async function carregarCaixaPeriodo(){
     return;
   }
   const vendas=rV.data||[],saidas=rS.data||[],perdas=rPR.data||[];
+  let itensPorVendaPeriodo={};
+  if(vendas.length>0){
+    try{
+      const{data:VI,error:eVI}=await sb.from('venda_itens').select('*').in('venda_id',vendas.map(v=>v.id));
+      if(!eVI)(VI||[]).forEach(i=>{if(!itensPorVendaPeriodo[i.venda_id])itensPorVendaPeriodo[i.venda_id]=[];itensPorVendaPeriodo[i.venda_id].push(i);});
+    }catch(e){}
+  }
   const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
   const totalSaidas=saidas.reduce((s,x)=>s+Number(x.valor),0);
   const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
@@ -602,7 +616,7 @@ async function carregarCaixaPeriodo(){
   });
   const diasOrdenados=Object.keys(porDia).sort();
   const diasHtml=diasOrdenados.map(d=>`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td style="text-align:right;font-weight:600;color:var(--gold2)">${fmt(porDia[d])}</td><td style="text-align:center"><button class="btn btn-teal btn-xs" onclick="gerarPDFCaixaDiaEspecifico('${d}')">🖨️ PDF</button></td></tr>`).join('');
-  window._caixaPeriodoCache={dataIni,dataFimStr,vendas,saidas,perdas,totalVendas,totalSaidas,totalPerdasCusto,porPag,porDia};
+  window._caixaPeriodoCache={dataIni,dataFimStr,vendas,saidas,perdas,totalVendas,totalSaidas,totalPerdasCusto,porPag,porDia,itensPorVendaPeriodo};
   el.innerHTML=`
   <div class="section-hdr"><div><div class="section-title">📊 Período: ${fmtDateOnly(dataIni+'T12:00:00')} até ${fmtDateOnly(dataFimStr+'T12:00:00')}</div><div class="section-sub">${vendas.length} transações no período</div></div>
   <button class="btn btn-secondary btn-sm" onclick="gerarPDFCaixaPeriodo()">🖨️ Baixar PDF do Período</button></div>
@@ -659,8 +673,8 @@ function gerarPDFCaixaDia(){
     <div class="stat"><div class="stat-label">Cartões</div><div class="stat-value">${fmt((c.porPag['debito']||0)+(c.porPag['credito']||0))}</div></div>
     <div class="stat"><div class="stat-label">Perdas (custo)</div><div class="stat-value">${fmt(c.totalPerdasCusto)}</div></div>`;
   const vendasHtml=c.vendas.length===0?'<p style="font-size:12px;color:#666">Nenhuma venda neste dia.</p>':`
-    <table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
-    <tbody>${c.vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
+    <table><thead><tr><th>Horário</th><th>Local</th><th>Produtos</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
+    <tbody>${c.vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${(c.itensPorVenda[v.id]||[]).length?(c.itensPorVenda[v.id]||[]).map(i=>`${i.qty}x ${i.nome}`).join(', '):'—'}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
   const perdasHtml=c.perdas.length===0?'':`<h2>🗑 Perdas do Dia</h2>
     <table><thead><tr><th>Horário</th><th>Produto</th><th>Qtd</th><th>Motivo</th><th>Custo Total</th><th>Operador</th></tr></thead>
     <tbody>${c.perdas.map(p=>`<tr><td>${fmtDateFull(p.criado_em)}</td><td>${p.produto}</td><td>-${p.qty}</td><td>${p.motivo}</td><td>${fmt(p.custo_total)}</td><td>${p.operador||''}</td></tr>`).join('')}</tbody></table>`;
@@ -679,8 +693,8 @@ function gerarPDFCaixaPeriodo(){
   const diasOrdenados=Object.keys(c.porDia).sort();
   const porDiaHtml=`<h2>Total Vendido por Dia</h2><table><thead><tr><th>Dia</th><th>Total</th></tr></thead>
     <tbody>${diasOrdenados.map(d=>`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td>${fmt(c.porDia[d])}</td></tr>`).join('')}</tbody></table>`;
-  const vendasHtml=`<h2>Todas as Vendas do Período</h2><table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
-    <tbody>${c.vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
+  const vendasHtml=`<h2>Todas as Vendas do Período</h2><table><thead><tr><th>Horário</th><th>Local</th><th>Produtos</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
+    <tbody>${c.vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${(c.itensPorVendaPeriodo[v.id]||[]).length?(c.itensPorVendaPeriodo[v.id]||[]).map(i=>`${i.qty}x ${i.nome}`).join(', '):'—'}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
   abrirJanelaImpressaoCaixa('Relatório de Período',fmtDateOnly(c.dataIni+'T12:00:00')+' até '+fmtDateOnly(c.dataFimStr+'T12:00:00'),statsHtml,porDiaHtml+vendasHtml);
 }
 async function gerarPDFCaixaDiaEspecifico(dataStr){
@@ -692,6 +706,11 @@ async function gerarPDFCaixaDiaEspecifico(dataStr){
     ]);
     if(rV.error)throw rV.error;if(rPR.error)throw rPR.error;
     const vendas=rV.data||[],perdas=rPR.data||[];
+    let itensPorVenda={};
+    if(vendas.length>0){
+      const{data:VI,error:eVI}=await sb.from('venda_itens').select('*').in('venda_id',vendas.map(v=>v.id));
+      if(!eVI)(VI||[]).forEach(i=>{if(!itensPorVenda[i.venda_id])itensPorVenda[i.venda_id]=[];itensPorVenda[i.venda_id].push(i);});
+    }
     const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
     const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
     const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
@@ -702,8 +721,8 @@ async function gerarPDFCaixaDiaEspecifico(dataStr){
       <div class="stat"><div class="stat-label">Cartões</div><div class="stat-value">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
       <div class="stat"><div class="stat-label">Perdas (custo)</div><div class="stat-value">${fmt(totalPerdasCusto)}</div></div>`;
     const vendasHtml=vendas.length===0?'<p style="font-size:12px;color:#666">Nenhuma venda neste dia.</p>':`
-      <table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
-      <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
+      <table><thead><tr><th>Horário</th><th>Local</th><th>Produtos</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
+      <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${(itensPorVenda[v.id]||[]).length?(itensPorVenda[v.id]||[]).map(i=>`${i.qty}x ${i.nome}`).join(', '):'—'}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
     const perdasHtml=perdas.length===0?'':`<h2>🗑 Perdas do Dia</h2>
       <table><thead><tr><th>Horário</th><th>Produto</th><th>Qtd</th><th>Motivo</th><th>Custo Total</th><th>Operador</th></tr></thead>
       <tbody>${perdas.map(p=>`<tr><td>${fmtDateFull(p.criado_em)}</td><td>${p.produto}</td><td>-${p.qty}</td><td>${p.motivo}</td><td>${fmt(p.custo_total)}</td><td>${p.operador||''}</td></tr>`).join('')}</tbody></table>`;
@@ -1110,9 +1129,20 @@ async function finalizarFechamentoFesta(){
     const cartao=parseFloat(document.getElementById('festa-pag-cartao')?.value)||0;
     const pix=parseFloat(document.getElementById('festa-pag-pix')?.value)||0;
     const pagamentos=[{metodo:'dinheiro',valor:dinheiro},{metodo:'cartao',valor:cartao},{metodo:'pix',valor:pix}].filter(p=>p.valor>0);
+    const itensAgregados={};(window._festaItensCache||[]).forEach(i=>{
+      if(!itensAgregados[i.produto_nome])itensAgregados[i.produto_nome]={qty:0,total:0};
+      itensAgregados[i.produto_nome].qty+=i.qty;itensAgregados[i.produto_nome].total+=i.preco*i.qty;
+    });
+    let primeiraVendaId=null;
     for(const pg of pagamentos){
-      const{error:eVenda}=await sb.from('vendas').insert({tipo:'Festa - '+festaAtual.nome,total:pg.valor,pagamento:pg.metodo,operador:currentUser.nome});
+      const{data:vendaCriada,error:eVenda}=await sb.from('vendas').insert({tipo:'Festa - '+festaAtual.nome,total:pg.valor,pagamento:pg.metodo,operador:currentUser.nome}).select().single();
       if(eVenda)throw new Error('Erro ao lançar venda no caixa ('+pg.metodo+'): '+eVenda.message);
+      if(!primeiraVendaId)primeiraVendaId=vendaCriada.id;
+    }
+    if(primeiraVendaId&&Object.keys(itensAgregados).length>0){
+      const itensParaSalvar=Object.keys(itensAgregados).map(nome=>({venda_id:primeiraVendaId,nome,qty:itensAgregados[nome].qty,total:itensAgregados[nome].total}));
+      const{error:eItens}=await sb.from('venda_itens').insert(itensParaSalvar);
+      if(eItens)console.error('Erro ao salvar itens da festa para o comprovante:',eItens.message);
     }
     const chkAbrir=document.getElementById('festa-abrir-caixa-chk');
     if(chkAbrir&&chkAbrir.checked){
