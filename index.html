@@ -265,6 +265,7 @@ function modalAberto(){return document.getElementById('modal-overlay').classList
 function getDiaComercial(){const agora=new Date();if(agora.getHours()<6){agora.setDate(agora.getDate()-1);}const inicio=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate(),6,0,0,0);const fim=new Date(inicio);fim.setDate(fim.getDate()+1);fim.setHours(5,59,59,999);return{inicio,fim};}
 function isHojeComercial(d){const dt=new Date(d);const{inicio,fim}=getDiaComercial();return dt>=inicio&&dt<=fim;}
 const fmt=v=>'R$ '+Number(v||0).toFixed(2).replace('.',',');
+const hojeLocalStr=(d)=>{const dt=d?new Date(d):new Date();return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');};
 const fmtDate=d=>{const dt=new Date(d);return dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});};
 const fmtDateFull=d=>{const dt=new Date(d);return dt.toLocaleDateString('pt-BR')+' '+fmtDate(d);};
 const fmtDateOnly=d=>new Date(d).toLocaleDateString('pt-BR');
@@ -466,7 +467,7 @@ async function renderDashboard(){
 
 async function renderCaixa(){
   await carregarEstadoCaixa();
-  const hoje=new Date().toISOString().split('T')[0];
+  const hoje=hojeLocalStr();
   document.getElementById('tab-content').innerHTML=`
   <div class="caixa-status ${caixaAberto?'caixa-aberto':'caixa-fechado'}">
     <div><div style="font-size:15px;font-weight:700">${caixaAberto?'🟢 Caixa Aberto':'🔴 Caixa Fechado'}</div>${caixaAberto?`<div style="font-size:12px;color:var(--text2);margin-top:3px">Aberto às ${fmtDateFull(caixaAberto.abertura)} | Troco: ${fmt(caixaAberto.troco)}</div>`:''}</div>
@@ -493,7 +494,7 @@ async function carregarEstadoCaixa(){
   try{const{data}=await sb.from('caixa_status').select('*').eq('id',1).maybeSingle();if(data&&data.aberto){caixaAberto={abertura:data.abertura,troco:data.troco,operador:data.operador};}else{caixaAberto=null;}}catch(e){caixaAberto=null;}
 }
 async function carregarCaixaDia(){
-  const sel=document.getElementById('caixa-data-sel');const data=sel?sel.value:new Date().toISOString().split('T')[0];
+  const sel=document.getElementById('caixa-data-sel');const data=sel?sel.value:hojeLocalStr();
   const tsInicio=new Date(`${data}T06:00:00`).toISOString();const dtFim=new Date(`${data}T06:00:00`);dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);const tsFim=dtFim.toISOString();
   const elChk=document.getElementById('caixa-dia-conteudo');if(elChk)elChk.innerHTML='<div class="empty" style="padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
   let V,S,PR,LG;
@@ -578,7 +579,7 @@ async function carregarCaixaDia(){
 }
 async function carregarCaixaPeriodo(){
   const selI=document.getElementById('caixa-periodo-inicio');const selF=document.getElementById('caixa-periodo-fim');
-  const dataIni=selI?selI.value:new Date().toISOString().split('T')[0];
+  const dataIni=selI?selI.value:hojeLocalStr();
   const dataFimStr=selF?selF.value:dataIni;
   const el=document.getElementById('caixa-periodo-conteudo');if(!el)return;
   if(dataFimStr<dataIni){el.innerHTML='<div class="empty" style="padding:20px"><p style="color:var(--red)">A data final não pode ser antes da data inicial.</p></div>';return;}
@@ -611,7 +612,7 @@ async function carregarCaixaPeriodo(){
   const porDia={};
   vendas.forEach(v=>{
     const dt=new Date(v.criado_em);const ref=new Date(dt);if(dt.getHours()<6)ref.setDate(ref.getDate()-1);
-    const chave=ref.toISOString().split('T')[0];
+    const chave=hojeLocalStr(ref);
     porDia[chave]=(porDia[chave]||0)+Number(v.total);
   });
   const diasOrdenados=Object.keys(porDia).sort();
@@ -1220,8 +1221,8 @@ async function confirmarEntrada(){const pid=parseInt(document.getElementById('en
 // 🟣 ESTOQUE BRUNO — ABA NOVA
 // ══════════════════════════════════════════════
 async function renderBruno(){
-  const hoje=new Date().toISOString().split('T')[0];
-  const primMes=new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().split('T')[0];
+  const hoje=hojeLocalStr();
+  const primMes=hojeLocalStr(new Date(new Date().getFullYear(),new Date().getMonth(),1));
   document.getElementById('tab-content').innerHTML=`
   <div style="background:linear-gradient(135deg,rgba(142,68,173,0.2),rgba(142,68,173,0.05));border:1px solid rgba(142,68,173,0.3);border-radius:var(--radius);padding:18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
     <div>
@@ -1266,7 +1267,7 @@ async function carregarStatsBruno(){
 
 async function carregarHistoricoBruno(){
   const ini=document.getElementById('bruno-filtro-ini')?.value||'2020-01-01';
-  const fim=document.getElementById('bruno-filtro-fim')?.value||new Date().toISOString().split('T')[0];
+  const fim=document.getElementById('bruno-filtro-fim')?.value||hojeLocalStr();
   const tsIni=new Date(`${ini}T00:00:00`).toISOString();
   const tsFim=new Date(`${fim}T23:59:59`).toISOString();
   const{data:E}=await sb.from('entradas_bruno').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false});
@@ -1300,7 +1301,7 @@ async function novaEntradaBruno(){
     &#128279; A quantidade será <b style="color:#d4a0f0">somada automaticamente</b> ao estoque geral da Malte.
   </div>
   <div class="modal-field"><label>&#128197; Data</label>
-    <input type="date" id="bru-data" value="${new Date().toISOString().split('T')[0]}" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+    <input type="date" id="bru-data" value="${hojeLocalStr()}" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
   </div>
   <div class="modal-field"><label>Produto</label>
     <select id="bru-prod" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(142,68,173,0.3);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
@@ -1373,7 +1374,7 @@ async function removerEntradaBruno(id,produto,qty){
 
 async function imprimirRelatorioBruno(){
   const ini=document.getElementById('bruno-filtro-ini')?.value||'2020-01-01';
-  const fim=document.getElementById('bruno-filtro-fim')?.value||new Date().toISOString().split('T')[0];
+  const fim=document.getElementById('bruno-filtro-fim')?.value||hojeLocalStr();
   const tsIni=new Date(`${ini}T00:00:00`).toISOString();
   const tsFim=new Date(`${fim}T23:59:59`).toISOString();
   const{data:E}=await sb.from('entradas_bruno').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false});
@@ -1436,12 +1437,12 @@ async function renderFinanceiro(){
     </div>
   </div>`;
 }
-function novaContaFinanceiro(tipo){openModal(`<h3>${tipo==='pagar'?'&#128228; Nova Conta a Pagar':'&#128229; Nova Conta a Receber'}</h3><div class="modal-field"><label>Descrição</label><input type="text" id="fin-desc" placeholder="Ex: Fornecedor, aluguel..."></div><div class="modal-field"><label>Valor (R$)</label><input type="number" id="fin-valor" value="0" step="0.01"></div><div class="modal-field"><label>Vencimento</label><input type="date" id="fin-venc" value="${new Date().toISOString().split('T')[0]}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarConta('${tipo}')">Salvar</button></div>`);}
+function novaContaFinanceiro(tipo){openModal(`<h3>${tipo==='pagar'?'&#128228; Nova Conta a Pagar':'&#128229; Nova Conta a Receber'}</h3><div class="modal-field"><label>Descrição</label><input type="text" id="fin-desc" placeholder="Ex: Fornecedor, aluguel..."></div><div class="modal-field"><label>Valor (R$)</label><input type="number" id="fin-valor" value="0" step="0.01"></div><div class="modal-field"><label>Vencimento</label><input type="date" id="fin-venc" value="${hojeLocalStr()}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarConta('${tipo}')">Salvar</button></div>`);}
 async function salvarConta(tipo){const desc=document.getElementById('fin-desc').value.trim();if(!desc)return;try{const{error}=await sb.from('financeiro').insert({tipo,descricao:desc,valor:parseFloat(document.getElementById('fin-valor').value)||0,vencimento:document.getElementById('fin-venc').value,pago:false});if(error){alert('Erro ao salvar: '+error.message);return;}closeModal();renderFinanceiro();}catch(e){alert('Erro: '+e.message);}}
 async function pagarConta(id){try{const{error}=await sb.from('financeiro').update({pago:true}).eq('id',id);if(error){alert('Erro ao marcar como pago: '+error.message);return;}renderFinanceiro();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderCompras(){
-  const hoje=new Date().toISOString().split('T')[0];
+  const hoje=hojeLocalStr();
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr">
     <div><div class="section-title">&#128717; Registro de Compras</div><div class="section-sub" id="cmp-sub">Selecione um dia para ver as compras</div></div>
@@ -1466,12 +1467,12 @@ async function renderCompras(){
 function irDiaCmpAnterior(){
   const sel=document.getElementById('cmp-data-sel');if(!sel)return;
   const d=new Date(sel.value+'T12:00:00');d.setDate(d.getDate()-1);
-  sel.value=d.toISOString().split('T')[0];carregarComprasDia();
+  sel.value=hojeLocalStr(d);carregarComprasDia();
 }
 function irDiaCmpProximo(){
   const sel=document.getElementById('cmp-data-sel');if(!sel)return;
   const d=new Date(sel.value+'T12:00:00');d.setDate(d.getDate()+1);
-  sel.value=d.toISOString().split('T')[0];carregarComprasDia();
+  sel.value=hojeLocalStr(d);carregarComprasDia();
 }
 
 async function verTodasCompras(){
@@ -1488,7 +1489,7 @@ async function verTodasCompras(){
 
 async function carregarComprasDia(){
   const sel=document.getElementById('cmp-data-sel');
-  const data=sel?sel.value:new Date().toISOString().split('T')[0];
+  const data=sel?sel.value:hojeLocalStr();
   const tsInicio=new Date(`${data}T00:00:00`).toISOString();
   const dtFim=new Date(`${data}T23:59:59`).toISOString();
   const wrap=document.getElementById('cmp-conteudo');if(!wrap)return;
@@ -1499,7 +1500,7 @@ async function carregarComprasDia(){
   const totalGasto=compras.filter(c=>c.status==='recebido').reduce((s,c)=>s+Number(c.valor_total),0);
   const totalPend=compras.filter(c=>c.status==='pendente').reduce((s,c)=>s+Number(c.valor_total),0);
   const dataFmt=new Date(`${data}T12:00:00`).toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});
-  const isHoje=data===new Date().toISOString().split('T')[0];
+  const isHoje=data===hojeLocalStr();
   if(sub)sub.textContent=`${dataFmt}${isHoje?' — Hoje':''}`;
   wrap.innerHTML=montarTabelaCompras(compras,totalGasto,totalPend,dataFmt);
 }
@@ -1571,7 +1572,7 @@ async function excluirCompra(id,status,qty,produto){
 
 async function novaCompra(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
-  const hoje=new Date().toISOString().split('T')[0];
+  const hoje=hojeLocalStr();
   const dataAtual=document.getElementById('cmp-data-sel')?.value||hoje;
   openModal(`<h3>&#128717; Nova Compra</h3>
   <div class="modal-field"><label>&#128197; Data da Compra</label>
@@ -1718,7 +1719,7 @@ async function salvarAnotacao(){const titulo=document.getElementById('not-titulo
 async function deletarAnotacao(id){try{const{error}=await sb.from('anotacoes').delete().eq('id',id);if(error){alert('Erro ao deletar nota: '+error.message);return;}renderAnotacoes();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderRelatorios(){
-  const hoje=new Date();const inicioMes=new Date(hoje.getFullYear(),hoje.getMonth(),1).toISOString().split('T')[0];const fimMes=hoje.toISOString().split('T')[0];
+  const hoje=new Date();const inicioMes=hojeLocalStr(new Date(hoje.getFullYear(),hoje.getMonth(),1));const fimMes=hojeLocalStr(hoje);
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div class="section-title">&#128200; Relatórios</div><button class="btn btn-primary btn-sm" onclick="imprimirRelatorio()">&#128424; Imprimir / PDF</button></div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;">
@@ -1732,7 +1733,7 @@ async function renderRelatorios(){
   <div id="relatorio-conteudo"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
   await aplicarFiltroRelatorio();
 }
-function aplicarAtalhoFiltro(val){const hoje=new Date();let inicio,fim;if(val==='hoje'){inicio=fim=hoje.toISOString().split('T')[0];}else if(val==='semana'){const s=new Date(hoje);s.setDate(hoje.getDate()-hoje.getDay());inicio=s.toISOString().split('T')[0];fim=hoje.toISOString().split('T')[0];}else if(val==='mes'){inicio=new Date(hoje.getFullYear(),hoje.getMonth(),1).toISOString().split('T')[0];fim=hoje.toISOString().split('T')[0];}else if(val==='tudo'){inicio='2020-01-01';fim=hoje.toISOString().split('T')[0];}else return;document.getElementById('filtro-inicio').value=inicio;document.getElementById('filtro-fim').value=fim;}
+function aplicarAtalhoFiltro(val){const hoje=new Date();let inicio,fim;if(val==='hoje'){inicio=fim=hojeLocalStr(hoje);}else if(val==='semana'){const s=new Date(hoje);s.setDate(hoje.getDate()-hoje.getDay());inicio=hojeLocalStr(s);fim=hojeLocalStr(hoje);}else if(val==='mes'){inicio=hojeLocalStr(new Date(hoje.getFullYear(),hoje.getMonth(),1));fim=hojeLocalStr(hoje);}else if(val==='tudo'){inicio='2020-01-01';fim=hojeLocalStr(hoje);}else return;document.getElementById('filtro-inicio').value=inicio;document.getElementById('filtro-fim').value=fim;}
 async function aplicarFiltroRelatorio(){
   const dtInicio=document.getElementById('filtro-inicio')?.value;const dtFim=document.getElementById('filtro-fim')?.value;if(!dtInicio||!dtFim)return;
   const tsInicio=new Date(`${dtInicio}T00:00:00`).toISOString();const tsFim=new Date(`${dtFim}T23:59:59`).toISOString();
@@ -1855,7 +1856,7 @@ async function registrarPerda(){
   if(P.length===0){alert('Nenhum produto cadastrado ainda. Cadastre um produto antes de registrar perda.');return;}
   // Usa o dia que está sendo consultado no Caixa como padrão (funciona com caixa aberto ou fechado)
   const selData=document.getElementById('caixa-data-sel');
-  const diaBase=selData&&selData.value?selData.value:new Date().toISOString().split('T')[0];
+  const diaBase=selData&&selData.value?selData.value:hojeLocalStr();
   const agora=new Date();
   const horaAtual=`${String(agora.getHours()).padStart(2,'0')}:${String(agora.getMinutes()).padStart(2,'0')}`;
   openModal(`<h3 style="color:var(--red)">&#128465; Registrar Perda</h3>
@@ -1933,7 +1934,7 @@ async function confirmarPerda(){
   const custoUnit=parseFloat(document.getElementById('prd-custo-unit').value)||0;
   const motivo=document.getElementById('prd-motivo').value;
   const obs=document.getElementById('prd-obs')?.value?.trim()||'';
-  const dataSel=document.getElementById('prd-data')?.value||new Date().toISOString().split('T')[0];
+  const dataSel=document.getElementById('prd-data')?.value||hojeLocalStr();
   const horaSel=document.getElementById('prd-hora')?.value||'12:00';
 
   if(!pid){alert('Selecione um produto válido.');return;}
