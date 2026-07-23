@@ -406,7 +406,7 @@ function goTab(tab){
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
-    dashboard:renderDashboard,
+    dashboard:()=>{ const ini=document.getElementById('dash-graf-ini');const fim=document.getElementById('dash-graf-fim');if((ini&&ini.value)||(fim&&fim.value))return;renderDashboard(); },
     caixa:()=>{ if(!modalAberto())carregarCaixaDia(); },
     balcao:renderBalcao,
     produtos:renderProdutos,
