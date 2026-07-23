@@ -428,6 +428,52 @@ function goTab(tab){
   }
 }
 
+async function calcularGraficoDashboard(iniDate,fimDate){
+  const{data:V}=await sb.from('vendas').select('*').gte('criado_em',iniDate.toISOString()).lte('criado_em',fimDate.toISOString()).order('criado_em',{ascending:true});
+  const vendasPeriodo=V||[];
+  const diasMs=Math.round((fimDate-iniDate)/(1000*60*60*24));
+  const numDias=Math.max(1,diasMs);
+  const dias=[];
+  for(let i=numDias-1;i>=0;i--){
+    const ini_i=new Date(iniDate);ini_i.setDate(ini_i.getDate()+(numDias-1-i));
+    const fim_i=new Date(ini_i);fim_i.setDate(fim_i.getDate()+1);fim_i.setMilliseconds(fim_i.getMilliseconds()-1);
+    const total_i=vendasPeriodo.filter(v=>{const dt=new Date(v.criado_em);return dt>=ini_i&&dt<=fim_i;}).reduce((s,v)=>s+Number(v.total),0);
+    dias.push({label:ini_i.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}),total:total_i});
+  }
+  const totalPeriodo=vendasPeriodo.reduce((s,v)=>s+Number(v.total),0);
+  // período anterior de mesmo tamanho, pra comparação
+  const iniAnterior=new Date(iniDate);iniAnterior.setDate(iniAnterior.getDate()-numDias);
+  const fimAnterior=new Date(iniDate);fimAnterior.setMilliseconds(fimAnterior.getMilliseconds()-1);
+  const{data:Vant}=await sb.from('vendas').select('total').gte('criado_em',iniAnterior.toISOString()).lte('criado_em',fimAnterior.toISOString());
+  const totalAnterior=(Vant||[]).reduce((s,v)=>s+Number(v.total),0);
+  const variacaoPeriodo=totalAnterior>0?((totalPeriodo-totalAnterior)/totalAnterior*100):(totalPeriodo>0?100:0);
+  const max=Math.max(...dias.map(d=>d.total),1);
+  const larguraMin=dias.length>14?'22px':'auto';
+  const graficoHtml=`<div style="display:flex;align-items:flex-end;gap:4px;height:110px;padding:8px 0;overflow-x:auto;">
+    ${dias.map(d=>`<div style="flex:1;min-width:${larguraMin};display:flex;flex-direction:column;align-items:center;gap:4px;" title="${d.label}: ${fmt(d.total)}">
+      ${dias.length<=14?`<div style="font-size:8.5px;color:var(--text2)">${d.total>0?fmt(d.total).replace('R$ ',''):''}</div>`:''}
+      <div style="width:100%;background:var(--gold);border-radius:3px 3px 0 0;height:${Math.max(3,(d.total/max)*70)}px;"></div>
+      <div style="font-size:8px;color:var(--text2)">${d.label}</div>
+    </div>`).join('')}
+  </div>`;
+  const container=document.getElementById('dash-graf-container');if(container)container.innerHTML=graficoHtml;
+  const comp=document.getElementById('dash-graf-comparacao');
+  if(comp)comp.innerHTML=`Total do período: <b style="color:var(--gold2)">${fmt(totalPeriodo)}</b> · <span style="color:${variacaoPeriodo>=0?'var(--green)':'var(--red)'}">${variacaoPeriodo>=0?'↑':'↓'} ${Math.abs(variacaoPeriodo).toFixed(0)}%</span> vs período anterior equivalente`;
+}
+function atualizarGraficoDashboard(dias){
+  const{fim:fimHoje}=getDiaComercial();
+  const ini=new Date(fimHoje);ini.setDate(ini.getDate()-dias+1);ini.setHours(6,0,0,0);
+  const fim=new Date(fimHoje);
+  calcularGraficoDashboard(ini,fim);
+}
+function atualizarGraficoDashboardCustom(){
+  const iniStr=document.getElementById('dash-graf-ini')?.value;const fimStr=document.getElementById('dash-graf-fim')?.value;
+  if(!iniStr||!fimStr){alert('Selecione as duas datas.');return;}
+  if(fimStr<iniStr){alert('A data final não pode ser antes da inicial.');return;}
+  const ini=new Date(`${iniStr}T06:00:00`);
+  const fim=new Date(`${fimStr}T06:00:00`);fim.setDate(fim.getDate()+1);fim.setHours(5,59,59,999);
+  calcularGraficoDashboard(ini,fim);
+}
 function bucketFormaPagamento(formaRaw){
   const f=(formaRaw||'').toLowerCase();
   if(f.includes('dinheiro'))return'dinheiro';
@@ -538,6 +584,28 @@ async function renderDashboard(){
     <div class="table-wrap"><table><thead><tr><th>Operador</th><th style="text-align:right">Total Vendido</th></tr></thead>
     <tbody>${rankOperadores.map((op,idx)=>`<tr><td>${idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':'•'} ${op}</td><td style="text-align:right;font-weight:600;color:var(--gold2)">${fmt(porOperador[op])}</td></tr>`).join('')}</tbody></table></div>`;
 
+  const topComboRef=topProdutos[0]||null;
+  const templatesCampanha=[
+    p=>topComboRef?`Monte um combo "${p.nome} + ${topComboRef}" com desconto de 10-15% — usa o produto que já vende bem pra puxar esse.`:`Monte um combo de ${p.nome} com outro produto popular, com desconto de 10-15%.`,
+    p=>`Ofereça uma degustação/amostra grátis de ${p.nome} — muita gente só experimenta se não tiver risco de "gastar à toa".`,
+    p=>`Destaque ${p.nome} como "Achado da Semana" nas redes sociais — item parado às vezes é só falta de visibilidade, não falta de qualidade.`,
+    p=>`Baixe o preço de ${p.nome} por um fim de semana e observe se o volume compensa a margem menor.`,
+    p=>`Inclua ${p.nome} como brinde em compras acima de um valor X — libera estoque sem parecer "queima de estoque".`,
+    p=>`Pergunta pro pessoal do caixa/salão se tem alguma resistência dos clientes com ${p.nome} (preço, desconhecimento, pouca visibilidade na prateleira).`
+  ];
+  const campanhaHtml=produtosParados.length===0?'':`
+  <div style="margin-bottom:18px;">
+    <div class="section-hdr"><div class="section-title" style="font-size:13px;">💡 Ideias pra movimentar produtos parados</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;">
+      ${produtosParados.slice(0,6).map((p,idx)=>`
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;">
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:4px;">${p.emoji||'📦'} ${p.nome} <span style="color:var(--text2);font-weight:400;font-size:11px">(estoque: ${p.estoque})</span></div>
+        <div style="font-size:11.5px;color:var(--text2);line-height:1.5;">${templatesCampanha[idx%templatesCampanha.length](p)}</div>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:8px;">💬 Sugestões geradas por heurística de vendas (não são geradas por IA em tempo real) — use como ponto de partida, adapte pro seu contexto.</div>
+  </div>`;
+
   document.getElementById('tab-content').innerHTML=`
   <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span style="font-size:12px;color:var(--text2)">Caixa:</span>${caixaInfo}
@@ -569,8 +637,19 @@ async function renderDashboard(){
 
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:16px;">
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;">
-      <div class="section-title" style="font-size:13px;margin-bottom:4px;">📈 Vendas — últimos 7 dias</div>
-      ${grafico7Html}
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+        <div class="section-title" style="font-size:13px;">📈 Vendas por período</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-xs" onclick="atualizarGraficoDashboard(7)">7d</button>
+          <button class="btn btn-secondary btn-xs" onclick="atualizarGraficoDashboard(14)">14d</button>
+          <button class="btn btn-secondary btn-xs" onclick="atualizarGraficoDashboard(30)">30d</button>
+          <input type="date" id="dash-graf-ini" style="font-size:11px;padding:3px 6px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
+          <input type="date" id="dash-graf-fim" style="font-size:11px;padding:3px 6px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
+          <button class="btn btn-teal btn-xs" onclick="atualizarGraficoDashboardCustom()">Aplicar</button>
+        </div>
+      </div>
+      <div id="dash-graf-comparacao" style="font-size:11px;color:var(--text2);margin-bottom:4px;"></div>
+      <div id="dash-graf-container">${grafico7Html}</div>
     </div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;">
       <div class="section-title" style="font-size:13px;margin-bottom:4px;">🕐 Vendas por hora (hoje)</div>
@@ -592,6 +671,8 @@ async function renderDashboard(){
       ${rankOperadoresHtml}
     </div>
   </div>
+
+  ${campanhaHtml}
 
   <div class="section-hdr"><div class="section-title">Últimas Vendas</div></div>
   <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
