@@ -1841,6 +1841,10 @@ function calcTotalCompra(){
 }
 
 async function salvarCompra(){
+  if(window._compraLock)return;window._compraLock=true;
+  const btnSalvar=document.querySelector('button[onclick="salvarCompra()"]');
+  if(btnSalvar){btnSalvar.disabled=true;btnSalvar.textContent='Salvando...';}
+  try{
   const forn=document.getElementById('cmp-forn').value.trim();
   if(!forn){alert('Informe o fornecedor.');return;}
   const pid=parseInt(document.getElementById('cmp-prod').value);
@@ -1850,7 +1854,6 @@ async function salvarCompra(){
   const status=document.getElementById('cmp-status').value;
   const dataCompra=document.getElementById('cmp-data').value;
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
-  try{
     const{data:prod,error:eProd}=await sb.from('produtos').select('nome,estoque').eq('id',pid).single();
     if(eProd||!prod){alert('Produto não encontrado.');return;}
     const{error:eCmp}=await sb.from('compras').insert({
@@ -1872,6 +1875,9 @@ ${status==='recebido'?`Estoque de ${prod.nome} atualizado: +${qty} unidades.`:'E
   }catch(e){
     console.error('Erro salvarCompra:',e);
     alert('Erro inesperado: '+e.message);
+  }finally{
+    window._compraLock=false;
+    if(btnSalvar){btnSalvar.disabled=false;btnSalvar.textContent='✅ Salvar Compra';}
   }
 }
 
