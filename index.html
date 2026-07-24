@@ -257,8 +257,9 @@ async function carregarOperadoresLogin(){
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=[],payAtual='dinheiro',caixaAberto=null;
 let splitPagamentos=[];
-let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null,festaPollingInterval=null;
+let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null,festaPollingInterval=null,dashboardPollingInterval=null;
 function stopGlobalPolling(){if(globalPollingInterval){clearInterval(globalPollingInterval);globalPollingInterval=null;}}
+function stopDashboardPolling(){if(dashboardPollingInterval){clearInterval(dashboardPollingInterval);dashboardPollingInterval=null;}}
 function stopFestaPolling(){if(festaPollingInterval){clearInterval(festaPollingInterval);festaPollingInterval=null;}}
 function modalAberto(){return document.getElementById('modal-overlay').classList.contains('open')||document.getElementById('senha-overlay').classList.contains('open');}
 
@@ -395,7 +396,7 @@ function checkSenha(){if(document.getElementById('senha-input').value===SENHAS.a
 function closeSenha(){document.getElementById('senha-overlay').classList.remove('open');senhaCallback=null;}
 
 function goTab(tab){
-  stopMesaPolling();stopEstoquePolling();stopGlobalPolling();stopFestaPolling();currentTab=tab;
+  stopMesaPolling();stopEstoquePolling();stopGlobalPolling();stopFestaPolling();stopDashboardPolling();currentTab=tab;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{const t=b.getAttribute('onclick')||'';if(t.includes("'"+tab+"'"))b.classList.add('active');});
   document.getElementById('tab-content').innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
@@ -406,7 +407,6 @@ function goTab(tab){
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
-    dashboard:()=>{ const ini=document.getElementById('dash-graf-ini');const fim=document.getElementById('dash-graf-fim');if((ini&&ini.value)||(fim&&fim.value))return;renderDashboard(); },
     caixa:()=>{ if(!modalAberto())carregarCaixaDia(); },
     balcao:renderBalcao,
     produtos:renderProdutos,
@@ -678,6 +678,14 @@ async function renderDashboard(){
   <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
     <tbody>${vendas14.slice().reverse().slice(0,8).map(v=>`<tr><td>${fmtDate(v.criado_em)}</td><td>${v.tipo}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td></tr>`).join('')}</tbody>
   </table></div>`;
+  stopDashboardPolling();
+  dashboardPollingInterval=setInterval(()=>{
+    if(currentTab!=='dashboard')return stopDashboardPolling();
+    if(modalAberto())return;
+    const ini=document.getElementById('dash-graf-ini');const fim=document.getElementById('dash-graf-fim');
+    if((ini&&ini.value)||(fim&&fim.value))return;
+    renderDashboard();
+  },30000);
 }
 
 async function renderCaixa(){
