@@ -236,7 +236,16 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 <script>
 const SUPABASE_URL='https://akicvaywryppktjiccpi.supabase.co';
 const SUPABASE_KEY='sb_publishable_KlSN5wVH24AYhF7kjEU0pg_NnVl2SQg';
-const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+let sb;
+if(typeof supabase==='undefined'){
+  // A biblioteca do Supabase (CDN) não carregou — mostra erro em vez de travar no spinner pra sempre
+  document.addEventListener('DOMContentLoaded',()=>{
+    const ls=document.getElementById('loading-screen');
+    if(ls)ls.innerHTML='<div style="color:var(--red);text-align:center;padding:20px;max-width:340px;"><b>Erro ao carregar o sistema</b><br><br>A biblioteca do Supabase não carregou. Verifique sua conexão com a internet ou desative bloqueadores de anúncio/script (ex: uBlock, AdBlock) para este site, depois recarregue a página (Ctrl+Shift+R).</div>';
+  });
+  throw new Error('Supabase CDN não carregou');
+}
+sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let SENHAS={adm:'11300955',caixa:'1234'};
 const USERS={adm:{role:'adm',nome:'Administrador'},caixa:{role:'caixa',nome:'Caixa'}};
 let OPERADORES=[];
@@ -346,10 +355,27 @@ window.addEventListener('load',async()=>{
   const s=localStorage.getItem('malte_senhas');if(s)try{SENHAS=JSON.parse(s);}catch(e){}
   const sessao=localStorage.getItem('malte_sessao');
   if(sessao){try{const u=JSON.parse(sessao);if(u&&USERS[u.id]){currentUser=u;document.getElementById('loading-screen').style.display='none';document.getElementById('app').style.display='flex';document.getElementById('top-user-pill').textContent=u.nome||USERS[u.id].nome;document.getElementById('top-role-badge').textContent=u.id.toUpperCase();if(u.id!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');goTab('dashboard');return;}}catch(e){}}
-  try{await sb.from('produtos').select('id').limit(1);}catch(e){}
+  try{
+    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),6000));
+    await Promise.race([sb.from('produtos').select('id').limit(1), timeout]);
+  }catch(e){
+    console.warn('Aviso: checagem inicial do Supabase falhou ou demorou demais (projeto pode estar pausado/inativo):',e.message);
+  }
   document.getElementById('loading-screen').style.display='none';
   document.getElementById('login-screen').style.display='flex';
 });
+
+// Rede de segurança: se por qualquer motivo não previsto o spinner ainda estiver visível
+// depois de 10s, esconde ele e mostra a tela de login mesmo assim, em vez de travar pra sempre.
+setTimeout(()=>{
+  const ls=document.getElementById('loading-screen');
+  if(ls && ls.style.display!=='none'){
+    console.warn('Rede de segurança acionada: spinner travado, forçando exibição da tela de login.');
+    ls.style.display='none';
+    const login=document.getElementById('login-screen');
+    if(login)login.style.display='flex';
+  }
+},10000);
 
 function setRole(r){
   document.querySelectorAll('.role-btn').forEach(b=>b.classList.remove('active'));
