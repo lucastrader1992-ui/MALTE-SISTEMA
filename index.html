@@ -1592,26 +1592,35 @@ async function renderCopao(){
 async function adicionarBallyCopao(){
   const qty=parseInt(document.getElementById('copao-bally-qty').value)||0;
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
-  const ce=await getCopaoEstoqueRow();
-  await sb.from('copao_estoque').update({bally_ml:(ce.bally_ml||0)+qty*COPAO_BALLY_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
-  await sincronizarEstoqueCopao();
-  await renderCopao();
+  try{
+    const ce=await getCopaoEstoqueRow();
+    const{error}=await sb.from('copao_estoque').update({bally_ml:(ce.bally_ml||0)+qty*COPAO_BALLY_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
+    if(error){alert('Erro ao adicionar Bally: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
+    await sincronizarEstoqueCopao();
+    await renderCopao();
+  }catch(e){alert('Erro inesperado ao adicionar Bally: '+e.message);}
 }
 async function adicionarGinCopao(){
   const qty=parseInt(document.getElementById('copao-gin-qty').value)||0;
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
-  const ce=await getCopaoEstoqueRow();
-  await sb.from('copao_estoque').update({gin_ml:(ce.gin_ml||0)+qty*COPAO_GIN_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
-  await sincronizarEstoqueCopao();
-  await renderCopao();
+  try{
+    const ce=await getCopaoEstoqueRow();
+    const{error}=await sb.from('copao_estoque').update({gin_ml:(ce.gin_ml||0)+qty*COPAO_GIN_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
+    if(error){alert('Erro ao adicionar Gin: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
+    await sincronizarEstoqueCopao();
+    await renderCopao();
+  }catch(e){alert('Erro inesperado ao adicionar Gin: '+e.message);}
 }
 async function adicionarGeloCopao(){
   const qty=parseInt(document.getElementById('copao-gelo-qty').value)||0;
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
-  const ce=await getCopaoEstoqueRow();
-  await sb.from('copao_estoque').update({gelo_un:(ce.gelo_un||0)+qty,atualizado_em:new Date().toISOString()}).eq('id',1);
-  await sincronizarEstoqueCopao();
-  await renderCopao();
+  try{
+    const ce=await getCopaoEstoqueRow();
+    const{error}=await sb.from('copao_estoque').update({gelo_un:(ce.gelo_un||0)+qty,atualizado_em:new Date().toISOString()}).eq('id',1);
+    if(error){alert('Erro ao adicionar Gelo: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
+    await sincronizarEstoqueCopao();
+    await renderCopao();
+  }catch(e){alert('Erro inesperado ao adicionar Gelo: '+e.message);}
 }
 
 // ══════════════════════════════════════════════
