@@ -211,6 +211,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <button class="nav-btn" onclick="goTab('festa')">🎉 Festa</button>
     <button class="nav-btn adm-only" onclick="goTab('estoque')">📦 Estoque</button>
     <button class="nav-btn adm-only bruno-tab" onclick="goTab('bruno')">👤 Bruno</button>
+    <button class="nav-btn adm-only" onclick="goTab('copao')">🥤 Copão</button>
     <button class="nav-btn adm-only" onclick="goTab('produtos')">🏷️ Produtos</button>
     <button class="nav-btn adm-only" onclick="goTab('financeiro')">💳 Financeiro</button>
     <button class="nav-btn adm-only" onclick="goTab('compras')">🛍️ Compras</button>
@@ -429,7 +430,7 @@ function goTab(tab){
   const tabs={dashboard:renderDashboard,caixa:renderCaixa,mesas:renderMesas,balcao:renderBalcao,
     estoque:renderEstoque,bruno:renderBruno,produtos:renderProdutos,financeiro:renderFinanceiro,
     compras:renderCompras,cmv:renderCMV,comissoes:renderComissoes,tarefas:renderTarefas,
-    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta};
+    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao};
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
@@ -1114,10 +1115,10 @@ async function fecharMesaVenda(id){
   if(valorFinal>0){
     const{data:venda}=await sb.from('vendas').insert({tipo:`Mesa ${id}`,total:valorFinal,pagamento:payAtual,operador:currentUser.nome}).select().single();
     if(venda&&I.length>0)await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
-    for(const i of I){try{const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);}catch(e){}}
+    for(const i of I){await descontarEstoqueItem(i.prod_id,i.qty);}
     if(venda)await verComprovante(venda.id);else closeModal();
   }else{
-    for(const i of I){try{const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prod_id).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prod_id);}catch(e){}}
+    for(const i of I){await descontarEstoqueItem(i.prod_id,i.qty);}
     closeModal();
   }
   renderMesas();}catch(e){console.error(e);closeModal();renderMesas();}finally{window._fechandoMesa=false;}
@@ -1150,7 +1151,7 @@ function qtyBalcao(idx,d){balcaoItens[idx].qty+=d;if(balcaoItens[idx].qty<=0)bal
 async function finalizarBalcao(){
   if(!balcaoItens.length||window._finalizandoBalcao)return;window._finalizandoBalcao=true;
   try{const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);const{data:venda}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
-  if(venda){await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));for(const i of balcaoItens){const{data:p}=await sb.from('produtos').select('estoque').eq('id',i.prodId).single();if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-i.qty)}).eq('id',i.prodId);}balcaoItens=[];await verComprovante(venda.id);}}
+  if(venda){await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));for(const i of balcaoItens){await descontarEstoqueItem(i.prodId,i.qty);}balcaoItens=[];await verComprovante(venda.id);}}
   catch(e){console.error(e);alert('Erro ao finalizar. Tente novamente.');}finally{window._finalizandoBalcao=false;}
 }
 
@@ -1222,8 +1223,7 @@ async function tocarProdutoFesta(prodId,nome,preco,emoji){
   try{
     const{data:item,error}=await sb.from('festa_itens').insert({festa_id:festaAtual.id,produto_id:prodId,produto_nome:nome,emoji,preco,qty:1}).select().single();
     if(error)throw error;
-    const{data:p}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
-    if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-1)}).eq('id',prodId);
+    await descontarEstoqueItem(prodId,1);
     festaVendidos[prodId]=(festaVendidos[prodId]||0)+1;
     window._festaItensCache=window._festaItensCache||[];window._festaItensCache.push(item);
     lastFestaEvent={type:'venda',id:item.id,produto_id:prodId,qty:1};
@@ -1238,8 +1238,7 @@ async function desfazerUltimaFesta(){
   try{
     if(lastFestaEvent.type==='venda'){
       await sb.from('festa_itens').delete().eq('id',lastFestaEvent.id);
-      const{data:p}=await sb.from('produtos').select('estoque').eq('id',lastFestaEvent.produto_id).single();
-      if(p)await sb.from('produtos').update({estoque:p.estoque+lastFestaEvent.qty}).eq('id',lastFestaEvent.produto_id);
+      await devolverEstoqueItem(lastFestaEvent.produto_id,lastFestaEvent.qty);
       festaVendidos[lastFestaEvent.produto_id]=Math.max(0,(festaVendidos[lastFestaEvent.produto_id]||1)-lastFestaEvent.qty);
       window._festaItensCache=(window._festaItensCache||[]).filter(i=>i.id!==lastFestaEvent.id);
     }
@@ -1265,8 +1264,7 @@ async function confirmarRetiradaFesta(){
     const motivo=document.getElementById('festa-retirada-motivo').value.trim()||'Não informado';
     const{error:eRet}=await sb.from('festa_retiradas').insert({festa_id:festaAtual.id,produto_id:prodId,produto_nome:nome,qty,motivo,autorizado_por:currentUser.nome});
     if(eRet)throw eRet;
-    const{data:p}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
-    if(p)await sb.from('produtos').update({estoque:Math.max(0,p.estoque-qty)}).eq('id',prodId);
+    await descontarEstoqueItem(prodId,qty);
     closeModal();await carregarEventosFesta();await desenharFesta();
     alert('✓ Retirada registrada: '+qty+'x '+nome);
   }catch(e){alert('Erro ao retirar produto: '+e.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE festa_retiradas DISABLE ROW LEVEL SECURITY;');}
@@ -1372,8 +1370,7 @@ async function finalizarFechamentoFesta(){
       const custoTotal=pr.qty*pr.custo_unit;
       const{error:ePerda}=await sb.from('perdas').insert({produto:pr.nome,qty:pr.qty,custo_unit:pr.custo_unit,custo_total:custoTotal,motivo:pr.motivo,observacao:'Festa: '+festaAtual.nome,operador:currentUser.nome,criado_em:new Date().toISOString()});
       if(ePerda)throw new Error('Erro ao registrar perda de '+pr.nome+': '+ePerda.message);
-      const{data:pAtual}=await sb.from('produtos').select('estoque').eq('id',pr.produto_id).single();
-      if(pAtual)await sb.from('produtos').update({estoque:Math.max(0,pAtual.estoque-pr.qty)}).eq('id',pr.produto_id);
+      await descontarEstoqueItem(pr.produto_id,pr.qty);
     }
     const dinheiro=parseFloat(document.getElementById('festa-pag-dinheiro')?.value)||0;
     const cartao=parseFloat(document.getElementById('festa-pag-cartao')?.value)||0;
@@ -1436,8 +1433,7 @@ async function confirmarCancelarFesta(){
     itens.forEach(i=>{devolucoes[i.produto_id]=(devolucoes[i.produto_id]||0)+i.qty;});
     retiradas.forEach(r=>{devolucoes[r.produto_id]=(devolucoes[r.produto_id]||0)+r.qty;});
     for(const pid of Object.keys(devolucoes)){
-      const{data:p}=await sb.from('produtos').select('estoque').eq('id',pid).single();
-      if(p)await sb.from('produtos').update({estoque:p.estoque+devolucoes[pid]}).eq('id',pid);
+      await devolverEstoqueItem(pid,devolucoes[pid]);
     }
     await sb.from('festa_itens').delete().eq('festa_id',festaAtual.id);
     await sb.from('festa_retiradas').delete().eq('festa_id',festaAtual.id);
@@ -1457,14 +1453,166 @@ async function atualizarTabelaEstoque(){
   const sub=document.getElementById('estoque-ultima-atualizacao');if(sub)sub.textContent=`🔄 Atualizado: ${agora}`;
   const wrap=document.getElementById('estoque-tabela-wrap');if(!wrap)return;
   wrap.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Produto</th><th>Cat</th><th>Estoque</th><th>Custo</th><th>Valor Total</th><th>Status</th></tr></thead>
-  <tbody>${(P||[]).map(p=>`<tr><td>${p.emoji} <b>${p.nome}</b></td><td><span class="badge badge-blue">${p.cat}</span></td><td style="font-weight:700;font-size:14px">${p.estoque}</td><td style="color:var(--text2)">${fmt(p.custo)}</td><td style="color:var(--gold2);font-weight:600">${fmt(p.custo*p.estoque)}</td><td><span class="badge ${p.estoque===0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}">${p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK'}</span></td></tr>`).join('')}</tbody>
+  <tbody>${(P||[]).map(p=>`<tr><td>${p.emoji} <b>${p.nome}</b>${isCopao(p.nome)?' <span class="badge badge-orange" title="Estoque calculado a partir da aba Copão">🥤 calculado</span>':''}</td><td><span class="badge badge-blue">${p.cat}</span></td><td style="font-weight:700;font-size:14px">${p.estoque}</td><td style="color:var(--text2)">${fmt(p.custo)}</td><td style="color:var(--gold2);font-weight:600">${fmt(p.custo*p.estoque)}</td><td><span class="badge ${p.estoque===0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}">${p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK'}</span></td></tr>`).join('')}</tbody>
   </table></div>`;
 }
 async function abrirEntrada(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
   openModal(`<h3>📦 Entrada de Estoque</h3><div class="modal-field"><label>Produto</label><select id="ent-prod">${(P||[]).map(p=>`<option value="${p.id}">${p.emoji} ${p.nome} (estoque: ${p.estoque})</option>`).join('')}</select></div><div class="modal-field"><label>Quantidade</label><input type="number" id="ent-qty" value="12" min="1"></div><div class="modal-field"><label>Custo Total (R$)</label><input type="number" id="ent-custo" value="0" step="0.01"></div><div class="modal-field"><label>Observação</label><input type="text" id="ent-obs" placeholder="Opcional"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEntrada()">Registrar</button></div>`);
 }
-async function confirmarEntrada(){const pid=parseInt(document.getElementById('ent-prod').value);const qty=parseInt(document.getElementById('ent-qty').value)||0;const custo=parseFloat(document.getElementById('ent-custo').value)||0;const obs=document.getElementById('ent-obs')?.value?.trim()||'';const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome,observacao:obs});closeModal();await atualizarTabelaEstoque();}
+async function confirmarEntrada(){const pid=parseInt(document.getElementById('ent-prod').value);const qty=parseInt(document.getElementById('ent-qty').value)||0;const custo=parseFloat(document.getElementById('ent-custo').value)||0;const obs=document.getElementById('ent-obs')?.value?.trim()||'';const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(isCopao(prod.nome)){alert('O estoque do Copão é controlado pela aba "🥤 Copão", não por Entrada de Estoque. Use a aba Copão para adicionar garrafas de Bally/Gin e unidades de Gelo.');closeModal();return;}await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome,observacao:obs});closeModal();await atualizarTabelaEstoque();}
+
+// ══════════════════════════════════════════════
+// 🥤 COPÃO — estoque próprio (pool separado) a partir de Bally/Gin/Gelo
+// ══════════════════════════════════════════════
+const COPAO_BALLY_ML=2000;   // 1 garrafa de Bally = 2000ml
+const COPAO_GIN_ML=900;      // 1 garrafa de Gin = 900ml
+const COPAO_CONSUMO_BALLY=280; // ml de Bally por copão
+const COPAO_CONSUMO_GIN_NORMAL=100; // ml de Gin por copão (sem promoção)
+const COPAO_CONSUMO_GIN_PROMO=50;   // ml de Gin por copão (com promoção ativa)
+const COPAO_CONSUMO_GELO=1; // unidades de gelo de sabor por copão
+
+function normalizarTexto(s){return(s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();}
+function isCopao(nome){return normalizarTexto(nome)==='copao';}
+
+async function getCopaoProduto(){
+  const{data}=await sb.from('produtos').select('*').order('id');
+  return(data||[]).find(p=>isCopao(p.nome))||null;
+}
+async function getCopaoEstoqueRow(){
+  const{data}=await sb.from('copao_estoque').select('*').eq('id',1).maybeSingle();
+  if(data)return data;
+  // cria a linha se ainda não existir
+  const{data:novo}=await sb.from('copao_estoque').insert({id:1,bally_ml:0,gin_ml:0,gelo_un:0}).select().single();
+  return novo||{id:1,bally_ml:0,gin_ml:0,gelo_un:0};
+}
+function copaoGinPorUnidade(copaoProd){return(copaoProd&&copaoProd.em_promo)?COPAO_CONSUMO_GIN_PROMO:COPAO_CONSUMO_GIN_NORMAL;}
+function copaoCalcularDisponiveis(ce,copaoProd){
+  const ginPorUn=copaoGinPorUnidade(copaoProd);
+  return Math.max(0,Math.min(
+    Math.floor((ce.bally_ml||0)/COPAO_CONSUMO_BALLY),
+    Math.floor((ce.gin_ml||0)/ginPorUn),
+    Math.floor(ce.gelo_un||0)
+  ));
+}
+async function sincronizarEstoqueCopao(){
+  try{
+    const copaoProd=await getCopaoProduto();
+    if(!copaoProd)return; // produto "Copão" ainda não foi criado em Produtos
+    const ce=await getCopaoEstoqueRow();
+    const disponiveis=copaoCalcularDisponiveis(ce,copaoProd);
+    await sb.from('produtos').update({estoque:disponiveis}).eq('id',copaoProd.id);
+  }catch(e){console.error('Erro ao sincronizar estoque do Copão:',e);}
+}
+
+// Chamado pelas rotinas de venda no lugar do desconto normal, quando o item vendido é o Copão
+async function consumirComponentesCopao(qty){
+  try{
+    const copaoProd=await getCopaoProduto();
+    const ce=await getCopaoEstoqueRow();
+    const ginPorUn=copaoGinPorUnidade(copaoProd);
+    const novoBally=Math.max(0,(ce.bally_ml||0)-COPAO_CONSUMO_BALLY*qty);
+    const novoGin=Math.max(0,(ce.gin_ml||0)-ginPorUn*qty);
+    const novoGelo=Math.max(0,(ce.gelo_un||0)-COPAO_CONSUMO_GELO*qty);
+    await sb.from('copao_estoque').update({bally_ml:novoBally,gin_ml:novoGin,gelo_un:novoGelo,atualizado_em:new Date().toISOString()}).eq('id',1);
+    await sincronizarEstoqueCopao();
+  }catch(e){console.error('Erro ao consumir componentes do Copão:',e);}
+}
+// Chamado quando uma venda de Copão é desfeita/cancelada (devolve aos componentes)
+async function devolverComponentesCopao(qty){
+  try{
+    const copaoProd=await getCopaoProduto();
+    const ce=await getCopaoEstoqueRow();
+    const ginPorUn=copaoGinPorUnidade(copaoProd);
+    const novoBally=(ce.bally_ml||0)+COPAO_CONSUMO_BALLY*qty;
+    const novoGin=(ce.gin_ml||0)+ginPorUn*qty;
+    const novoGelo=(ce.gelo_un||0)+COPAO_CONSUMO_GELO*qty;
+    await sb.from('copao_estoque').update({bally_ml:novoBally,gin_ml:novoGin,gelo_un:novoGelo,atualizado_em:new Date().toISOString()}).eq('id',1);
+    await sincronizarEstoqueCopao();
+  }catch(e){console.error('Erro ao devolver componentes do Copão:',e);}
+}
+
+// Helpers genéricos usados por TODAS as rotinas de venda (mesa, balcão, festa):
+// decidem sozinhos se o produto é o Copão (desconta dos componentes) ou um produto comum (desconta do próprio estoque)
+async function descontarEstoqueItem(prodId,qty){
+  try{
+    const{data:p}=await sb.from('produtos').select('*').eq('id',prodId).single();
+    if(!p)return;
+    if(isCopao(p.nome)){await consumirComponentesCopao(qty);return;}
+    await sb.from('produtos').update({estoque:Math.max(0,p.estoque-qty)}).eq('id',prodId);
+  }catch(e){console.error('Erro ao descontar estoque:',e);}
+}
+async function devolverEstoqueItem(prodId,qty){
+  try{
+    const{data:p}=await sb.from('produtos').select('*').eq('id',prodId).single();
+    if(!p)return;
+    if(isCopao(p.nome)){await devolverComponentesCopao(qty);return;}
+    await sb.from('produtos').update({estoque:p.estoque+qty}).eq('id',prodId);
+  }catch(e){console.error('Erro ao devolver estoque:',e);}
+}
+
+async function renderCopao(){
+  const copaoProd=await getCopaoProduto();
+  const ce=await getCopaoEstoqueRow();
+  const ginPorUn=copaoGinPorUnidade(copaoProd);
+  const disponiveis=copaoProd?copaoCalcularDisponiveis(ce,copaoProd):0;
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><div class="section-title">🥤 Estoque do Copão</div><div class="section-sub">Pool separado da venda avulsa de Bally, Gin e Gelo de sabor</div></div></div>
+
+  ${!copaoProd?`<div class="alert alert-warn">⚠️ Ainda não existe um produto chamado exatamente <b>"Copão"</b> na aba Produtos. Crie-o lá primeiro (nome exatamente "Copão", com preço de venda) — depois volte aqui pra abastecer o estoque dele. Sem esse produto, o número calculado aqui não aparece na Mesa/Balcão/Estoque.</div>`:''}
+
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">🥤 Copões Disponíveis</div><div class="stat-value">${disponiveis}</div><div class="stat-sub">Limitado pelo ingrediente mais escasso</div></div>
+    <div class="stat-card"><div class="stat-label">Bally em estoque</div><div class="stat-value">${(ce.bally_ml||0).toLocaleString('pt-BR')} ml</div><div class="stat-sub">${Math.floor((ce.bally_ml||0)/COPAO_CONSUMO_BALLY)} copões possíveis (280ml cada)</div></div>
+    <div class="stat-card"><div class="stat-label">Gin em estoque</div><div class="stat-value">${(ce.gin_ml||0).toLocaleString('pt-BR')} ml</div><div class="stat-sub">${Math.floor((ce.gin_ml||0)/ginPorUn)} copões possíveis (${ginPorUn}ml cada${copaoProd&&copaoProd.em_promo?' — promoção ativa':''})</div></div>
+    <div class="stat-card"><div class="stat-label">Gelo de sabor</div><div class="stat-value">${ce.gelo_un||0} un</div><div class="stat-sub">${ce.gelo_un||0} copões possíveis (1un cada)</div></div>
+  </div>
+
+  ${copaoProd&&copaoProd.em_promo?`<div class="alert alert-warn">🔥 Promoção ativa no produto "Copão" — o consumo de Gin por copão está em <b>${COPAO_CONSUMO_GIN_PROMO}ml</b> em vez de ${COPAO_CONSUMO_GIN_NORMAL}ml. Isso é controlado pelo botão de Promoções na aba Produtos.</div>`:''}
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:18px;">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;">🍾 Adicionar Bally</div>
+      <div class="modal-field"><label>Quantidade de garrafas (2L cada)</label><input type="number" id="copao-bally-qty" value="1" min="1"></div>
+      <button class="btn btn-primary btn-sm" style="width:100%" onclick="adicionarBallyCopao()">+ Adicionar ao estoque do Copão</button>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;">🍸 Adicionar Gin</div>
+      <div class="modal-field"><label>Quantidade de garrafas (900ml cada)</label><input type="number" id="copao-gin-qty" value="1" min="1"></div>
+      <button class="btn btn-primary btn-sm" style="width:100%" onclick="adicionarGinCopao()">+ Adicionar ao estoque do Copão</button>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;">🧊 Adicionar Gelo de Sabor</div>
+      <div class="modal-field"><label>Quantidade de unidades</label><input type="number" id="copao-gelo-qty" value="1" min="1"></div>
+      <button class="btn btn-primary btn-sm" style="width:100%" onclick="adicionarGeloCopao()">+ Adicionar ao estoque do Copão</button>
+    </div>
+  </div>
+  <div style="font-size:11px;color:var(--text3);">Esse estoque é 100% separado da venda avulsa de Bally, Gin e Gelo — adicionar aqui não altera o estoque desses produtos vendidos soltos, e vice-versa.</div>`;
+}
+async function adicionarBallyCopao(){
+  const qty=parseInt(document.getElementById('copao-bally-qty').value)||0;
+  if(qty<=0){alert('Informe uma quantidade válida.');return;}
+  const ce=await getCopaoEstoqueRow();
+  await sb.from('copao_estoque').update({bally_ml:(ce.bally_ml||0)+qty*COPAO_BALLY_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
+  await sincronizarEstoqueCopao();
+  await renderCopao();
+}
+async function adicionarGinCopao(){
+  const qty=parseInt(document.getElementById('copao-gin-qty').value)||0;
+  if(qty<=0){alert('Informe uma quantidade válida.');return;}
+  const ce=await getCopaoEstoqueRow();
+  await sb.from('copao_estoque').update({gin_ml:(ce.gin_ml||0)+qty*COPAO_GIN_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
+  await sincronizarEstoqueCopao();
+  await renderCopao();
+}
+async function adicionarGeloCopao(){
+  const qty=parseInt(document.getElementById('copao-gelo-qty').value)||0;
+  if(qty<=0){alert('Informe uma quantidade válida.');return;}
+  const ce=await getCopaoEstoqueRow();
+  await sb.from('copao_estoque').update({gelo_un:(ce.gelo_un||0)+qty,atualizado_em:new Date().toISOString()}).eq('id',1);
+  await sincronizarEstoqueCopao();
+  await renderCopao();
+}
 
 // ══════════════════════════════════════════════
 // 🟣 ESTOQUE BRUNO — ABA NOVA
@@ -1588,6 +1736,7 @@ async function confirmarEntradaBruno(){
     if(qty<=0){alert('Informe uma quantidade válida.');if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
     const{data:prod,error:eProd}=await sb.from('produtos').select('*').eq('id',pid).single();
     if(eProd||!prod){alert('Erro ao buscar produto: '+(eProd?.message||'não encontrado'));if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
+    if(isCopao(prod.nome)){alert('O estoque do Copão é controlado pela aba "🥤 Copão". Use-a para adicionar garrafas de Bally/Gin e unidades de Gelo.');if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
     const tsEntrada=dataEnt?new Date(`${dataEnt}T${new Date().toTimeString().slice(0,8)}`).toISOString():new Date().toISOString();
     // 1. Registra na tabela do Bruno
     const{error:eBruno}=await sb.from('entradas_bruno').insert({produto:prod.nome,categoria:prod.cat,qty,custo,observacao:obs,criado_em:tsEntrada});
@@ -1658,17 +1807,17 @@ async function renderProdutos(){
   </div>
   <div class="table-wrap"><table>
     <thead><tr><th>Produto</th><th>Cat</th><th>Compra</th><th>Venda</th><th>Margem</th><th>Estoque</th><th>Promo</th><th>Ações</th></tr></thead>
-    <tbody>${(P||[]).map(p=>{const margem=p.preco>0?((p.preco-p.custo)/p.preco*100).toFixed(0):0;return`<tr><td>${p.emoji} <b>${p.nome}</b></td><td><span class="badge badge-blue">${p.cat}</span></td><td style="color:var(--red)">${fmt(p.custo)}</td><td style="color:var(--green);font-weight:600">${fmt(p.preco)}</td><td><span class="badge ${margem>=50?'badge-green':margem>=30?'badge-gold':'badge-red'}">${margem}%</span></td><td>${p.estoque}</td><td>${p.em_promo?`<span class="badge badge-red">&#128293;${fmt(p.preco_promo)}</span>`:'<span style="color:var(--text3)">Não</span>'}</td><td><div style="display:flex;gap:3px;"><button class="btn btn-secondary btn-xs" onclick="pedirSenhaAdm('Editar produto',()=>editarProduto(${p.id}))">&#9999;</button><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Remover produto',()=>removerProduto(${p.id}))">&#10005;</button></div></td></tr>`;}).join('')}</tbody>
+    <tbody>${(P||[]).map(p=>{const margem=p.preco>0?((p.preco-p.custo)/p.preco*100).toFixed(0):0;return`<tr><td>${p.emoji} <b>${p.nome}</b>${isCopao(p.nome)?' <span class="badge badge-orange" title="Estoque calculado na aba Copão">🥤</span>':''}</td><td><span class="badge badge-blue">${p.cat}</span></td><td style="color:var(--red)">${fmt(p.custo)}</td><td style="color:var(--green);font-weight:600">${fmt(p.preco)}</td><td><span class="badge ${margem>=50?'badge-green':margem>=30?'badge-gold':'badge-red'}">${margem}%</span></td><td>${p.estoque}</td><td>${p.em_promo?`<span class="badge badge-red">&#128293;${fmt(p.preco_promo)}</span>`:'<span style="color:var(--text3)">Não</span>'}</td><td><div style="display:flex;gap:3px;"><button class="btn btn-secondary btn-xs" onclick="pedirSenhaAdm('Editar produto',()=>editarProduto(${p.id}))">&#9999;</button><button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Remover produto',()=>removerProduto(${p.id}))">&#10005;</button></div></td></tr>`;}).join('')}</tbody>
   </table></div>`;
 }
 async function sugestaoPreco(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128161; Sugestão de Preço</h3><div style="max-height:400px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--bg3)"><th style="padding:8px">Produto</th><th style="padding:8px;text-align:center">Compra</th><th style="padding:8px;text-align:center">+30%</th><th style="padding:8px;text-align:center">+50%</th><th style="padding:8px;text-align:center">+70%</th><th style="padding:8px;text-align:center">Atual</th></tr></thead><tbody>${(P||[]).map(p=>{const s30=p.custo/(1-0.30);const s50=p.custo/(1-0.50);const s70=p.custo/(1-0.70);return`<tr style="border-top:1px solid var(--border)"><td style="padding:8px">${p.emoji} ${p.nome}</td><td style="padding:8px;text-align:center;color:var(--red)">${fmt(p.custo)}</td><td style="padding:8px;text-align:center;color:var(--orange)">${fmt(s30)}</td><td style="padding:8px;text-align:center;color:var(--gold2)">${fmt(s50)}</td><td style="padding:8px;text-align:center;color:var(--green)">${fmt(s70)}</td><td style="padding:8px;text-align:center;font-weight:600">${fmt(p.preco)}</td></tr>`;}).join('')}</tbody></table></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
 async function abrirNovoProduto(){openModal(`<h3>&#128247; Novo Produto</h3><div class="modal-field"><label>Nome</label><input type="text" id="np-nome" placeholder="Nome do produto"></div><div class="modal-field"><label>Categoria</label><select id="np-cat"><option>Cerveja</option><option>Refrigerante</option><option>Água</option><option>Destilado</option><option>Energético</option><option>Suco</option><option>Outro</option></select></div><div class="modal-field"><label>Emoji</label><input type="text" id="np-emoji" value="&#127866;" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra (R$)</label><input type="number" id="np-custo" value="0" step="0.01"></div><div class="modal-field"><label>Preço de Venda (R$)</label><input type="number" id="np-preco" value="0" step="0.01"></div></div><div class="modal-field"><label>Estoque Inicial</label><input type="number" id="np-estoque" value="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarNovoProduto()">Salvar</button></div>`);}
-async function salvarNovoProduto(){const nome=document.getElementById('np-nome').value.trim();if(!nome)return;try{const{error}=await sb.from('produtos').insert({nome,cat:document.getElementById('np-cat').value,emoji:document.getElementById('np-emoji').value||'📦',custo:parseFloat(document.getElementById('np-custo').value)||0,preco:parseFloat(document.getElementById('np-preco').value)||0,estoque:parseInt(document.getElementById('np-estoque').value)||0});if(error){alert('Erro ao salvar produto: '+error.message);return;}closeModal();renderProdutos();}catch(e){alert('Erro: '+e.message);}}
-async function editarProduto(id){const{data:p}=await sb.from('produtos').select('*').eq('id',id).single();openModal(`<h3>&#9999; Editar Produto</h3><div class="modal-field"><label>Nome</label><input type="text" id="ep-nome" value="${p.nome}"></div><div class="modal-field"><label>Categoria</label><select id="ep-cat">${['Cerveja','Refrigerante','Água','Destilado','Energético','Suco','Outro'].map(c=>`<option${c===p.cat?' selected':''}>${c}</option>`).join('')}</select></div><div class="modal-field"><label>Emoji</label><input type="text" id="ep-emoji" value="${p.emoji}" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra</label><input type="number" id="ep-custo" value="${p.custo}" step="0.01"></div><div class="modal-field"><label>Preço de Venda</label><input type="number" id="ep-preco" value="${p.preco}" step="0.01"></div></div><div class="modal-field"><label>Estoque</label><input type="number" id="ep-estoque" value="${p.estoque}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEditarProduto(${id})">Salvar</button></div>`);}
-async function confirmarEditarProduto(id){try{const{error}=await sb.from('produtos').update({nome:document.getElementById('ep-nome').value.trim(),cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0,estoque:parseInt(document.getElementById('ep-estoque').value)||0}).eq('id',id);if(error){alert('Erro ao editar produto: '+error.message);return;}closeModal();renderProdutos();}catch(e){alert('Erro: '+e.message);}}
+async function salvarNovoProduto(){const nome=document.getElementById('np-nome').value.trim();if(!nome)return;try{const{error}=await sb.from('produtos').insert({nome,cat:document.getElementById('np-cat').value,emoji:document.getElementById('np-emoji').value||'📦',custo:parseFloat(document.getElementById('np-custo').value)||0,preco:parseFloat(document.getElementById('np-preco').value)||0,estoque:parseInt(document.getElementById('np-estoque').value)||0});if(error){alert('Erro ao salvar produto: '+error.message);return;}closeModal();renderProdutos();if(isCopao(nome))await sincronizarEstoqueCopao();}catch(e){alert('Erro: '+e.message);}}
+async function editarProduto(id){const{data:p}=await sb.from('produtos').select('*').eq('id',id).single();openModal(`<h3>&#9999; Editar Produto</h3>${isCopao(p.nome)?'<div class="alert alert-warn">O campo Estoque deste produto é calculado automaticamente pela aba 🥤 Copão — editar aqui é sobrescrito na próxima sincronização.</div>':''}<div class="modal-field"><label>Nome</label><input type="text" id="ep-nome" value="${p.nome}"></div><div class="modal-field"><label>Categoria</label><select id="ep-cat">${['Cerveja','Refrigerante','Água','Destilado','Energético','Suco','Outro'].map(c=>`<option${c===p.cat?' selected':''}>${c}</option>`).join('')}</select></div><div class="modal-field"><label>Emoji</label><input type="text" id="ep-emoji" value="${p.emoji}" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra</label><input type="number" id="ep-custo" value="${p.custo}" step="0.01"></div><div class="modal-field"><label>Preço de Venda</label><input type="number" id="ep-preco" value="${p.preco}" step="0.01"></div></div><div class="modal-field"><label>Estoque</label><input type="number" id="ep-estoque" value="${p.estoque}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEditarProduto(${id})">Salvar</button></div>`);}
+async function confirmarEditarProduto(id){try{const nome=document.getElementById('ep-nome').value.trim();const{error}=await sb.from('produtos').update({nome,cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0,estoque:parseInt(document.getElementById('ep-estoque').value)||0}).eq('id',id);if(error){alert('Erro ao editar produto: '+error.message);return;}closeModal();renderProdutos();if(isCopao(nome))await sincronizarEstoqueCopao();}catch(e){alert('Erro: '+e.message);}}
 async function removerProduto(id){try{const{error}=await sb.from('produtos').delete().eq('id',id);if(error){alert('Erro ao remover produto: '+error.message);return;}renderProdutos();}catch(e){alert('Erro: '+e.message);}}
-async function gerenciarPromocoes(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128293; Gerenciar Promoções</h3><div style="max-height:380px;overflow-y:auto;">${(P||[]).map(p=>`<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px;margin-bottom:7px;border:1px solid ${p.em_promo?'rgba(192,57,43,0.4)':'var(--border)'};"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;"><div style="font-size:13px;font-weight:600">${p.emoji} ${p.nome}</div><div style="font-size:11px;color:var(--text2)">Normal: ${fmt(p.preco)}</div></div><div style="display:flex;align-items:center;gap:7px;"><input type="number" id="promo-${p.id}" value="${p.preco_promo||p.preco}" step="0.01" style="width:90px;padding:5px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;"><button class="btn ${p.em_promo?'btn-danger':'btn-orange'} btn-xs" onclick="togglePromo(${p.id},${!p.em_promo})">${p.em_promo?'Desativar':'Ativar'}</button></div></div>`).join('')}</div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
-async function togglePromo(id,ativar){const preco_promo=parseFloat(document.getElementById('promo-'+id).value)||0;try{const{error}=await sb.from('produtos').update({em_promo:ativar,preco_promo}).eq('id',id);if(error){alert('Erro ao atualizar promoção: '+error.message);return;}gerenciarPromocoes();}catch(e){alert('Erro: '+e.message);}}
+async function gerenciarPromocoes(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128293; Gerenciar Promoções</h3><div style="max-height:380px;overflow-y:auto;">${(P||[]).map(p=>`<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px;margin-bottom:7px;border:1px solid ${p.em_promo?'rgba(192,57,43,0.4)':'var(--border)'};"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;"><div style="font-size:13px;font-weight:600">${p.emoji} ${p.nome}${isCopao(p.nome)?' <span style="font-size:10px;color:var(--gold2)">(Gin cai pra 50ml no copão)</span>':''}</div><div style="font-size:11px;color:var(--text2)">Normal: ${fmt(p.preco)}</div></div><div style="display:flex;align-items:center;gap:7px;"><input type="number" id="promo-${p.id}" value="${p.preco_promo||p.preco}" step="0.01" style="width:90px;padding:5px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;"><button class="btn ${p.em_promo?'btn-danger':'btn-orange'} btn-xs" onclick="togglePromo(${p.id},${!p.em_promo})">${p.em_promo?'Desativar':'Ativar'}</button></div></div>`).join('')}</div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
+async function togglePromo(id,ativar){const preco_promo=parseFloat(document.getElementById('promo-'+id).value)||0;try{const{data:prodAtual,error:errSel}=await sb.from('produtos').select('nome').eq('id',id).single();const{error}=await sb.from('produtos').update({em_promo:ativar,preco_promo}).eq('id',id);if(error){alert('Erro ao atualizar promoção: '+error.message);return;}if(prodAtual&&isCopao(prodAtual.nome))await sincronizarEstoqueCopao();gerenciarPromocoes();}catch(e){alert('Erro: '+e.message);}}
 
 async function renderFinanceiro(){
   const{data:F}=await sb.from('financeiro').select('*').order('vencimento',{ascending:true});
@@ -2050,11 +2199,12 @@ async function renderConfiguracoes(){
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:10px">&#8505; Sistema</div>
       <div style="font-size:12px;color:var(--text2);line-height:1.9">
-        <div>Versão: <b style="color:var(--text)">4.2</b></div>
+        <div>Versão: <b style="color:var(--text)">4.3</b></div>
         <div>Banco: <b style="color:var(--green)">Supabase Online &#10003;</b></div>
         <div>URL: <b style="color:var(--gold2)">malte-sistema.vercel.app</b></div>
         <div>Dia comercial: <b style="color:var(--gold2)">06:00 → 05:59 (+1d)</b></div>
         <div>Novo: <b style="color:var(--bruno)">&#128100; Aba Estoque Bruno &#10003;</b></div>
+        <div>Novo: <b style="color:var(--orange)">🥤 Aba Copão (pool separado) &#10003;</b></div>
       </div>
     </div>
   </div>`;
@@ -2227,15 +2377,14 @@ async function confirmarPerda(){
       return;
     }
 
-    // 2. Desconta do estoque (sempre no estoque atual/real, independente do dia escolhido para a perda)
-    const{error:eUpdate}=await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',pid);
-    if(eUpdate){alert('Perda registrada, mas houve erro ao atualizar o estoque: '+eUpdate.message);}
+    // 2. Desconta do estoque (Copão desconta dos componentes; produto comum desconta do próprio estoque)
+    await descontarEstoqueItem(pid,qty);
 
     // 3. Log
     try{await registrarLog('PERDA',`${prod.nome} -${qty} un — Motivo: ${motivo} — Custo: ${fmt(custoTotal)} — Dia: ${dataSel}`);}catch(e){}
 
     closeModal();
-    alert(`✅ Perda registrada!\n${qty}x ${prod.nome} (${motivo})\nDia: ${dataSel} ${horaSel}\nEstoque ajustado: ${prod.estoque} → ${Math.max(0,prod.estoque-qty)} unidades.`);
+    alert(`✅ Perda registrada!\n${qty}x ${prod.nome} (${motivo})\nDia: ${dataSel} ${horaSel}`);
     // Garante que a tela do dia mostrado reflita o dia da perda registrada
     const selData=document.getElementById('caixa-data-sel');
     if(selData)selData.value=dataSel;
@@ -2254,7 +2403,7 @@ async function excluirPerda(id,qty){
     if(perda){
       // Estorna ao estoque
       const{data:prod}=await sb.from('produtos').select('*').ilike('nome',perda.produto).maybeSingle();
-      if(prod)await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
+      if(prod)await devolverEstoqueItem(prod.id,qty);
       try{await registrarLog('EXCLUIU PERDA',`${perda.produto} +${qty} un (estorno)`);}catch(e){}
     }
     await sb.from('perdas').delete().eq('id',id);
