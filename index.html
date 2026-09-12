@@ -1467,7 +1467,7 @@ async function confirmarEntrada(){const pid=parseInt(document.getElementById('en
 // ══════════════════════════════════════════════
 const COPAO_BALLY_ML=2000;   // 1 garrafa de Bally = 2000ml
 const COPAO_GIN_ML=900;      // 1 garrafa de Gin = 900ml
-const COPAO_CONSUMO_BALLY=280; // ml de Bally por copão
+const COPAO_CONSUMO_BALLY=200; // ml de Bally por copão
 const COPAO_CONSUMO_GIN_NORMAL=100; // ml de Gin por copão (sem promoção)
 const COPAO_CONSUMO_GIN_PROMO=50;   // ml de Gin por copão (com promoção ativa)
 const COPAO_CONSUMO_GELO=1; // unidades de gelo de sabor por copão
@@ -1563,7 +1563,7 @@ async function renderCopao(){
 
   <div class="stats-grid">
     <div class="stat-card stat-gold"><div class="stat-label">🥤 Copões Disponíveis</div><div class="stat-value">${disponiveis}</div><div class="stat-sub">Limitado pelo ingrediente mais escasso</div></div>
-    <div class="stat-card"><div class="stat-label">Bally em estoque</div><div class="stat-value">${(ce.bally_ml||0).toLocaleString('pt-BR')} ml</div><div class="stat-sub">${Math.floor((ce.bally_ml||0)/COPAO_CONSUMO_BALLY)} copões possíveis (280ml cada)</div></div>
+    <div class="stat-card"><div class="stat-label">Bally em estoque</div><div class="stat-value">${(ce.bally_ml||0).toLocaleString('pt-BR')} ml</div><div class="stat-sub">${Math.floor((ce.bally_ml||0)/COPAO_CONSUMO_BALLY)} copões possíveis (200ml cada)</div></div>
     <div class="stat-card"><div class="stat-label">Gin em estoque</div><div class="stat-value">${(ce.gin_ml||0).toLocaleString('pt-BR')} ml</div><div class="stat-sub">${Math.floor((ce.gin_ml||0)/ginPorUn)} copões possíveis (${ginPorUn}ml cada${copaoProd&&copaoProd.em_promo?' — promoção ativa':''})</div></div>
     <div class="stat-card"><div class="stat-label">Gelo de sabor</div><div class="stat-value">${ce.gelo_un||0} un</div><div class="stat-sub">${ce.gelo_un||0} copões possíveis (1un cada)</div></div>
   </div>
