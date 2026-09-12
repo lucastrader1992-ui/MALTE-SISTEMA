@@ -1647,7 +1647,8 @@ async function adicionarBallyCopao(){
     const mlAdicionado=qty*COPAO_BALLY_ML;
     const{error}=await sb.from('copao_estoque').update({bally_ml:(ce.bally_ml||0)+mlAdicionado,atualizado_em:new Date().toISOString()}).eq('id',1);
     if(error){alert('Erro ao adicionar Bally: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
-    try{await sb.from('entradas').insert({produto:'Bally (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${mlAdicionado.toLocaleString('pt-BR')}ml adicionados ao estoque do Copão`,criado_em:copaoDataAdicaoEscolhida()});}catch(e2){}
+    const{error:eEnt}=await sb.from('entradas').insert({produto:'Bally (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${mlAdicionado.toLocaleString('pt-BR')}ml adicionados ao estoque do Copão`,criado_em:copaoDataAdicaoEscolhida()});
+    if(eEnt)alert('O estoque foi somado, mas o registro no histórico falhou: '+eEnt.message);
     await sincronizarEstoqueCopao();
     await renderCopao();
   }catch(e){alert('Erro inesperado ao adicionar Bally: '+e.message);}
@@ -1660,7 +1661,8 @@ async function adicionarGinCopao(){
     const mlAdicionado=qty*COPAO_GIN_ML;
     const{error}=await sb.from('copao_estoque').update({gin_ml:(ce.gin_ml||0)+mlAdicionado,atualizado_em:new Date().toISOString()}).eq('id',1);
     if(error){alert('Erro ao adicionar Gin: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
-    try{await sb.from('entradas').insert({produto:'Gin (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${mlAdicionado.toLocaleString('pt-BR')}ml adicionados ao estoque do Copão`,criado_em:copaoDataAdicaoEscolhida()});}catch(e2){}
+    const{error:eEnt}=await sb.from('entradas').insert({produto:'Gin (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${mlAdicionado.toLocaleString('pt-BR')}ml adicionados ao estoque do Copão`,criado_em:copaoDataAdicaoEscolhida()});
+    if(eEnt)alert('O estoque foi somado, mas o registro no histórico falhou: '+eEnt.message);
     await sincronizarEstoqueCopao();
     await renderCopao();
   }catch(e){alert('Erro inesperado ao adicionar Gin: '+e.message);}
@@ -1672,7 +1674,8 @@ async function adicionarGeloCopao(){
     const ce=await getCopaoEstoqueRow();
     const{error}=await sb.from('copao_estoque').update({gelo_un:(ce.gelo_un||0)+qty,atualizado_em:new Date().toISOString()}).eq('id',1);
     if(error){alert('Erro ao adicionar Gelo: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
-    try{await sb.from('entradas').insert({produto:'Gelo de Sabor (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${qty} unidades adicionadas ao estoque do Copão`,criado_em:copaoDataAdicaoEscolhida()});}catch(e2){}
+    const{error:eEnt}=await sb.from('entradas').insert({produto:'Gelo de Sabor (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${qty} unidades adicionadas ao estoque do Copão`,criado_em:copaoDataAdicaoEscolhida()});
+    if(eEnt)alert('O estoque foi somado, mas o registro no histórico falhou: '+eEnt.message);
     await sincronizarEstoqueCopao();
     await renderCopao();
   }catch(e){alert('Erro inesperado ao adicionar Gelo: '+e.message);}
