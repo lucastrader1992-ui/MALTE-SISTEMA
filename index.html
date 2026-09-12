@@ -1598,7 +1598,22 @@ async function renderCopao(){
       <div class="modal-field"><label>Gelo (unidades)</label><input type="number" id="copao-corrigir-gelo" value="${ce.gelo_un||0}" min="0" step="1"></div>
     </div>
     <button class="btn btn-orange btn-sm" style="width:100%" onclick="salvarCorrecaoCopao()">✓ Salvar valores corrigidos</button>
+  </div>
+
+  <div style="margin-top:18px;">
+    <div class="section-hdr"><div><div class="section-title">📋 Histórico de Compras do Copão</div><div class="section-sub">Quanto de cada item foi adicionado, dia a dia</div></div></div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span style="font-size:12px;font-weight:600;color:var(--gold2)">📅 Período:</span>
+      <input type="date" id="copao-hist-ini" value="${hojeLocalStr(new Date(new Date().getFullYear(),new Date().getMonth(),1))}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+      <span style="color:var(--text2)">até</span>
+      <input type="date" id="copao-hist-fim" value="${hojeLocalStr()}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+      <button class="btn btn-primary btn-sm" onclick="carregarHistoricoCopao()">🔍 Filtrar</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('copao-hist-ini').value='2020-01-01';document.getElementById('copao-hist-fim').value='${hojeLocalStr()}';carregarHistoricoCopao()">📋 Tudo</button>
+      <button class="btn btn-teal btn-sm" onclick="imprimirRelatorioCopao()">🖨️ Baixar PDF</button>
+    </div>
+    <div id="copao-historico"><div class="empty" style="padding:20px"><div class="spinner" style="margin:0 auto"></div></div></div>
   </div>`;
+  await carregarHistoricoCopao();
 }
 async function salvarCorrecaoCopao(){
   const bally=parseFloat(document.getElementById('copao-corrigir-bally').value);
@@ -1619,8 +1634,10 @@ async function adicionarBallyCopao(){
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
   try{
     const ce=await getCopaoEstoqueRow();
-    const{error}=await sb.from('copao_estoque').update({bally_ml:(ce.bally_ml||0)+qty*COPAO_BALLY_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
+    const mlAdicionado=qty*COPAO_BALLY_ML;
+    const{error}=await sb.from('copao_estoque').update({bally_ml:(ce.bally_ml||0)+mlAdicionado,atualizado_em:new Date().toISOString()}).eq('id',1);
     if(error){alert('Erro ao adicionar Bally: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
+    try{await sb.from('entradas').insert({produto:'Bally (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${mlAdicionado.toLocaleString('pt-BR')}ml adicionados ao estoque do Copão`});}catch(e2){}
     await sincronizarEstoqueCopao();
     await renderCopao();
   }catch(e){alert('Erro inesperado ao adicionar Bally: '+e.message);}
@@ -1630,8 +1647,10 @@ async function adicionarGinCopao(){
   if(qty<=0){alert('Informe uma quantidade válida.');return;}
   try{
     const ce=await getCopaoEstoqueRow();
-    const{error}=await sb.from('copao_estoque').update({gin_ml:(ce.gin_ml||0)+qty*COPAO_GIN_ML,atualizado_em:new Date().toISOString()}).eq('id',1);
+    const mlAdicionado=qty*COPAO_GIN_ML;
+    const{error}=await sb.from('copao_estoque').update({gin_ml:(ce.gin_ml||0)+mlAdicionado,atualizado_em:new Date().toISOString()}).eq('id',1);
     if(error){alert('Erro ao adicionar Gin: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
+    try{await sb.from('entradas').insert({produto:'Gin (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${mlAdicionado.toLocaleString('pt-BR')}ml adicionados ao estoque do Copão`});}catch(e2){}
     await sincronizarEstoqueCopao();
     await renderCopao();
   }catch(e){alert('Erro inesperado ao adicionar Gin: '+e.message);}
@@ -1643,9 +1662,88 @@ async function adicionarGeloCopao(){
     const ce=await getCopaoEstoqueRow();
     const{error}=await sb.from('copao_estoque').update({gelo_un:(ce.gelo_un||0)+qty,atualizado_em:new Date().toISOString()}).eq('id',1);
     if(error){alert('Erro ao adicionar Gelo: '+error.message+'\n\nSe mencionar "row-level security", acesse o Supabase → Editor SQL e rode:\nALTER TABLE copao_estoque DISABLE ROW LEVEL SECURITY;');return;}
+    try{await sb.from('entradas').insert({produto:'Gelo de Sabor (Copão)',qty,custo:0,operador:currentUser.nome,observacao:`+${qty} unidades adicionadas ao estoque do Copão`});}catch(e2){}
     await sincronizarEstoqueCopao();
     await renderCopao();
   }catch(e){alert('Erro inesperado ao adicionar Gelo: '+e.message);}
+}
+
+// ══════════════════════════════════════════════
+// 📋 HISTÓRICO DE ENTRADAS DO COPÃO (com filtro por data + PDF)
+// ══════════════════════════════════════════════
+async function carregarHistoricoCopao(){
+  const ini=document.getElementById('copao-hist-ini')?.value||hojeLocalStr(new Date(new Date().getFullYear(),new Date().getMonth(),1));
+  const fim=document.getElementById('copao-hist-fim')?.value||hojeLocalStr();
+  const tsIni=new Date(`${ini}T00:00:00`).toISOString();
+  const tsFim=new Date(`${fim}T23:59:59`).toISOString();
+  const wrap=document.getElementById('copao-historico');if(!wrap)return;
+  wrap.innerHTML='<div class="empty" style="padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
+  const PRODUTOS_COPAO=['Bally (Copão)','Gin (Copão)','Gelo de Sabor (Copão)'];
+  const{data:E,error}=await sb.from('entradas').select('*').in('produto',PRODUTOS_COPAO).gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:false});
+  if(error){wrap.innerHTML=`<div class="empty" style="padding:20px"><p style="color:var(--red)">Erro ao carregar histórico: ${error.message}</p></div>`;return;}
+  const mapaTipo={'Bally (Copão)':'bally','Gin (Copão)':'gin','Gelo de Sabor (Copão)':'gelo'};
+  const entradas=(E||[]).map(e=>{
+    const tipo=mapaTipo[e.produto]||'?';
+    const ml=tipo==='bally'?Number(e.qty)*COPAO_BALLY_ML:tipo==='gin'?Number(e.qty)*COPAO_GIN_ML:Number(e.qty);
+    return{...e,tipo,ml};
+  });
+  // Agrupa por dia e por tipo
+  const porDia={};
+  entradas.forEach(e=>{
+    const dt=new Date(e.criado_em);const chave=hojeLocalStr(dt);
+    if(!porDia[chave])porDia[chave]={bally:0,gin:0,gelo:0,bally_ml:0,gin_ml:0};
+    if(e.tipo==='bally'){porDia[chave].bally+=Number(e.qty);porDia[chave].bally_ml+=e.ml;}
+    if(e.tipo==='gin'){porDia[chave].gin+=Number(e.qty);porDia[chave].gin_ml+=e.ml;}
+    if(e.tipo==='gelo'){porDia[chave].gelo+=Number(e.qty);}
+  });
+  const diasOrdenados=Object.keys(porDia).sort().reverse();
+  const totalBallyGarrafas=entradas.filter(e=>e.tipo==='bally').reduce((s,e)=>s+Number(e.qty),0);
+  const totalGinGarrafas=entradas.filter(e=>e.tipo==='gin').reduce((s,e)=>s+Number(e.qty),0);
+  const totalGeloUn=entradas.filter(e=>e.tipo==='gelo').reduce((s,e)=>s+Number(e.qty),0);
+  window._copaoHistoricoCache={ini,fim,entradas,porDia,diasOrdenados,totalBallyGarrafas,totalGinGarrafas,totalGeloUn};
+  wrap.innerHTML=`
+  <div class="stats-grid" style="margin-bottom:14px;">
+    <div class="stat-card"><div class="stat-label">🍾 Bally comprado (período)</div><div class="stat-value">${totalBallyGarrafas} garrafas</div></div>
+    <div class="stat-card"><div class="stat-label">🍸 Gin comprado (período)</div><div class="stat-value">${totalGinGarrafas} garrafas</div></div>
+    <div class="stat-card"><div class="stat-label">🧊 Gelo comprado (período)</div><div class="stat-value">${totalGeloUn} unidades</div></div>
+  </div>
+  ${diasOrdenados.length===0?`<div class="empty" style="padding:24px"><div class="empty-icon">📦</div><p>Nenhuma adição registrada nesse período</p></div>`:`
+  <div class="table-wrap"><table>
+    <thead><tr><th>Dia</th><th>Bally</th><th>Gin</th><th>Gelo</th></tr></thead>
+    <tbody>${diasOrdenados.map(d=>`<tr>
+      <td style="font-weight:600">${fmtDateOnly(d+'T12:00:00')}</td>
+      <td>${porDia[d].bally>0?`+${porDia[d].bally} garrafas (${porDia[d].bally_ml.toLocaleString('pt-BR')}ml)`:'—'}</td>
+      <td>${porDia[d].gin>0?`+${porDia[d].gin} garrafas (${porDia[d].gin_ml.toLocaleString('pt-BR')}ml)`:'—'}</td>
+      <td>${porDia[d].gelo>0?`+${porDia[d].gelo} unidades`:'—'}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>
+  <div class="section-hdr" style="margin-top:6px"><div class="section-title" style="font-size:13px">Detalhado (cada adição individual)</div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data/Hora</th><th>Item</th><th>Quantidade</th><th>Operador</th></tr></thead>
+    <tbody>${entradas.map(e=>{
+      const nomes={bally:'🍾 Bally',gin:'🍸 Gin',gelo:'🧊 Gelo de sabor'};
+      const qtdTxt=e.tipo==='gelo'?`+${e.qty} unidades`:`+${e.qty} garrafas (${e.ml.toLocaleString('pt-BR')}ml)`;
+      return`<tr><td style="font-size:11px">${fmtDateFull(e.criado_em)}</td><td>${nomes[e.tipo]||e.tipo}</td><td style="font-weight:600;color:var(--gold2)">${qtdTxt}</td><td style="font-size:11px">${e.operador||''}</td></tr>`;
+    }).join('')}</tbody>
+  </table></div>`}`;
+}
+function imprimirRelatorioCopao(){
+  const c=window._copaoHistoricoCache;
+  if(!c){alert('Carregue o histórico primeiro (clique em Filtrar).');return;}
+  const statsHtml=`
+    <div class="stat"><div class="stat-label">Bally comprado</div><div class="stat-value">${c.totalBallyGarrafas} garrafas</div></div>
+    <div class="stat"><div class="stat-label">Gin comprado</div><div class="stat-value">${c.totalGinGarrafas} garrafas</div></div>
+    <div class="stat"><div class="stat-label">Gelo comprado</div><div class="stat-value">${c.totalGeloUn} unidades</div></div>`;
+  const porDiaHtml=c.diasOrdenados.length===0?'<p style="font-size:12px;color:#666">Nenhuma adição no período.</p>':`
+    <table><thead><tr><th>Dia</th><th>Bally</th><th>Gin</th><th>Gelo</th></tr></thead>
+    <tbody>${c.diasOrdenados.map(d=>`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td>${c.porDia[d].bally>0?`+${c.porDia[d].bally} garrafas (${c.porDia[d].bally_ml.toLocaleString('pt-BR')}ml)`:'—'}</td><td>${c.porDia[d].gin>0?`+${c.porDia[d].gin} garrafas (${c.porDia[d].gin_ml.toLocaleString('pt-BR')}ml)`:'—'}</td><td>${c.porDia[d].gelo>0?`+${c.porDia[d].gelo} unidades`:'—'}</td></tr>`).join('')}</tbody></table>`;
+  const detalhadoHtml=`<h2>Detalhado</h2><table><thead><tr><th>Data/Hora</th><th>Item</th><th>Quantidade</th><th>Operador</th></tr></thead>
+    <tbody>${c.entradas.map(e=>{
+      const nomes={bally:'Bally',gin:'Gin',gelo:'Gelo de sabor'};
+      const qtdTxt=e.tipo==='gelo'?`+${e.qty} unidades`:`+${e.qty} garrafas (${e.ml.toLocaleString('pt-BR')}ml)`;
+      return`<tr><td>${fmtDateFull(e.criado_em)}</td><td>${nomes[e.tipo]||e.tipo}</td><td>${qtdTxt}</td><td>${e.operador||''}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  abrirJanelaImpressaoCaixa('Histórico do Estoque do Copão',fmtDateOnly(c.ini+'T12:00:00')+' até '+fmtDateOnly(c.fim+'T12:00:00'),statsHtml,`<h2>Total por Dia</h2>${porDiaHtml}${detalhadoHtml}`);
 }
 
 // ══════════════════════════════════════════════
