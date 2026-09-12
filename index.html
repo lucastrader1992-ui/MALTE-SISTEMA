@@ -1604,7 +1604,7 @@ async function renderCopao(){
     <div class="section-hdr"><div><div class="section-title">📋 Histórico de Compras do Copão</div><div class="section-sub">Quanto de cada item foi adicionado, dia a dia</div></div></div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <span style="font-size:12px;font-weight:600;color:var(--gold2)">📅 Período:</span>
-      <input type="date" id="copao-hist-ini" value="${hojeLocalStr(new Date(new Date().getFullYear(),new Date().getMonth(),1))}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
+      <input type="date" id="copao-hist-ini" value="2020-01-01" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
       <span style="color:var(--text2)">até</span>
       <input type="date" id="copao-hist-fim" value="${hojeLocalStr()}" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;">
       <button class="btn btn-primary btn-sm" onclick="carregarHistoricoCopao()">🔍 Filtrar</button>
@@ -1672,7 +1672,7 @@ async function adicionarGeloCopao(){
 // 📋 HISTÓRICO DE ENTRADAS DO COPÃO (com filtro por data + PDF)
 // ══════════════════════════════════════════════
 async function carregarHistoricoCopao(){
-  const ini=document.getElementById('copao-hist-ini')?.value||hojeLocalStr(new Date(new Date().getFullYear(),new Date().getMonth(),1));
+  const ini=document.getElementById('copao-hist-ini')?.value||'2020-01-01';
   const fim=document.getElementById('copao-hist-fim')?.value||hojeLocalStr();
   const tsIni=new Date(`${ini}T00:00:00`).toISOString();
   const tsFim=new Date(`${fim}T23:59:59`).toISOString();
@@ -1696,6 +1696,9 @@ async function carregarHistoricoCopao(){
     if(e.tipo==='gin'){porDia[chave].gin+=Number(e.qty);porDia[chave].gin_ml+=e.ml;}
     if(e.tipo==='gelo'){porDia[chave].gelo+=Number(e.qty);}
   });
+  // Garante que o dia de hoje sempre apareça na lista, mesmo sem nenhuma adição ainda
+  const hojeChave=hojeLocalStr();
+  if(!porDia[hojeChave])porDia[hojeChave]={bally:0,gin:0,gelo:0,bally_ml:0,gin_ml:0};
   const diasOrdenados=Object.keys(porDia).sort().reverse();
   const totalBallyGarrafas=entradas.filter(e=>e.tipo==='bally').reduce((s,e)=>s+Number(e.qty),0);
   const totalGinGarrafas=entradas.filter(e=>e.tipo==='gin').reduce((s,e)=>s+Number(e.qty),0);
@@ -1707,25 +1710,34 @@ async function carregarHistoricoCopao(){
     <div class="stat-card"><div class="stat-label">🍸 Gin comprado (período)</div><div class="stat-value">${totalGinGarrafas} garrafas</div></div>
     <div class="stat-card"><div class="stat-label">🧊 Gelo comprado (período)</div><div class="stat-value">${totalGeloUn} unidades</div></div>
   </div>
-  ${diasOrdenados.length===0?`<div class="empty" style="padding:24px"><div class="empty-icon">📦</div><p>Nenhuma adição registrada nesse período</p></div>`:`
-  <div class="table-wrap"><table>
-    <thead><tr><th>Dia</th><th>Bally</th><th>Gin</th><th>Gelo</th></tr></thead>
-    <tbody>${diasOrdenados.map(d=>`<tr>
-      <td style="font-weight:600">${fmtDateOnly(d+'T12:00:00')}</td>
-      <td>${porDia[d].bally>0?`+${porDia[d].bally} garrafas (${porDia[d].bally_ml.toLocaleString('pt-BR')}ml)`:'—'}</td>
-      <td>${porDia[d].gin>0?`+${porDia[d].gin} garrafas (${porDia[d].gin_ml.toLocaleString('pt-BR')}ml)`:'—'}</td>
-      <td>${porDia[d].gelo>0?`+${porDia[d].gelo} unidades`:'—'}</td>
-    </tr>`).join('')}</tbody>
-  </table></div>
-  <div class="section-hdr" style="margin-top:6px"><div class="section-title" style="font-size:13px">Detalhado (cada adição individual)</div></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Data/Hora</th><th>Item</th><th>Quantidade</th><th>Operador</th></tr></thead>
-    <tbody>${entradas.map(e=>{
-      const nomes={bally:'🍾 Bally',gin:'🍸 Gin',gelo:'🧊 Gelo de sabor'};
+  <div style="margin-bottom:18px;">
+    ${diasOrdenados.map(d=>{
+      const partes=[];
+      if(porDia[d].bally>0)partes.push(`<b style="color:var(--gold3)">${porDia[d].bally} garrafas de Bally</b> (${porDia[d].bally_ml.toLocaleString('pt-BR')}ml)`);
+      if(porDia[d].gin>0)partes.push(`<b style="color:var(--gold3)">${porDia[d].gin} garrafas de Gin</b> (${porDia[d].gin_ml.toLocaleString('pt-BR')}ml)`);
+      if(porDia[d].gelo>0)partes.push(`<b style="color:var(--gold3)">${porDia[d].gelo} unidades de Gelo de sabor</b>`);
+      const isHoje=d===hojeChave;
+      const semNada=partes.length===0;
+      return`<div class="alert alert-warn" style="margin-bottom:8px;cursor:pointer;transition:opacity 0.2s;" onclick="copaoAbrirPDFDia('${d}')" title="Clique para abrir o PDF desse dia">📅 <b>${fmtDateOnly(d+'T12:00:00')}${isHoje?' (hoje)':''}</b> — ${semNada?'nenhuma adição ainda':'adicionado: '+partes.join(', ')} <span style="float:right;font-size:11px;color:var(--text2)">🖨️ ver PDF</span></div>`;
+    }).join('')}
+  </div>`;
+}
+function copaoAbrirPDFDia(dataStr){
+  const c=window._copaoHistoricoCache;
+  if(!c){alert('Carregue o histórico primeiro.');return;}
+  const entradasDoDia=c.entradas.filter(e=>hojeLocalStr(new Date(e.criado_em))===dataStr);
+  const porDiaInfo=c.porDia[dataStr]||{bally:0,gin:0,gelo:0,bally_ml:0,gin_ml:0};
+  const statsHtml=`
+    <div class="stat"><div class="stat-label">Bally adicionado</div><div class="stat-value">${porDiaInfo.bally} garrafas (${porDiaInfo.bally_ml.toLocaleString('pt-BR')}ml)</div></div>
+    <div class="stat"><div class="stat-label">Gin adicionado</div><div class="stat-value">${porDiaInfo.gin} garrafas (${porDiaInfo.gin_ml.toLocaleString('pt-BR')}ml)</div></div>
+    <div class="stat"><div class="stat-label">Gelo adicionado</div><div class="stat-value">${porDiaInfo.gelo} unidades</div></div>`;
+  const detalhadoHtml=entradasDoDia.length===0?'<p style="font-size:12px;color:#666">Nenhuma adição registrada nesse dia.</p>':`<h2>Adições do Dia</h2><table><thead><tr><th>Hora</th><th>Item</th><th>Quantidade</th><th>Operador</th></tr></thead>
+    <tbody>${entradasDoDia.map(e=>{
+      const nomes={bally:'Bally',gin:'Gin',gelo:'Gelo de sabor'};
       const qtdTxt=e.tipo==='gelo'?`+${e.qty} unidades`:`+${e.qty} garrafas (${e.ml.toLocaleString('pt-BR')}ml)`;
-      return`<tr><td style="font-size:11px">${fmtDateFull(e.criado_em)}</td><td>${nomes[e.tipo]||e.tipo}</td><td style="font-weight:600;color:var(--gold2)">${qtdTxt}</td><td style="font-size:11px">${e.operador||''}</td></tr>`;
-    }).join('')}</tbody>
-  </table></div>`}`;
+      return`<tr><td>${fmtDateFull(e.criado_em)}</td><td>${nomes[e.tipo]||e.tipo}</td><td>${qtdTxt}</td><td>${e.operador||''}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  abrirJanelaImpressaoCaixa('Estoque do Copão — Dia',fmtDateOnly(dataStr+'T12:00:00'),statsHtml,detalhadoHtml);
 }
 function imprimirRelatorioCopao(){
   const c=window._copaoHistoricoCache;
