@@ -1587,7 +1587,32 @@ async function renderCopao(){
       <button class="btn btn-primary btn-sm" style="width:100%" onclick="adicionarGeloCopao()">+ Adicionar ao estoque do Copão</button>
     </div>
   </div>
-  <div style="font-size:11px;color:var(--text3);">Esse estoque é 100% separado da venda avulsa de Bally, Gin e Gelo — adicionar aqui não altera o estoque desses produtos vendidos soltos, e vice-versa.</div>`;
+  <div style="font-size:11px;color:var(--text3);margin-bottom:18px;">Esse estoque é 100% separado da venda avulsa de Bally, Gin e Gelo — adicionar aqui não altera o estoque desses produtos vendidos soltos, e vice-versa.</div>
+
+  <div style="background:var(--card);border:1px solid rgba(230,126,34,0.3);border-radius:var(--radius);padding:16px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px;color:var(--orange);">🛠️ Corrigir Estoque Manualmente</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:12px;">Errou uma quantidade? Digite o valor CERTO abaixo (não soma, substitui o número atual) e salve.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:10px;">
+      <div class="modal-field"><label>Bally (ml)</label><input type="number" id="copao-corrigir-bally" value="${ce.bally_ml||0}" min="0" step="1"></div>
+      <div class="modal-field"><label>Gin (ml)</label><input type="number" id="copao-corrigir-gin" value="${ce.gin_ml||0}" min="0" step="1"></div>
+      <div class="modal-field"><label>Gelo (unidades)</label><input type="number" id="copao-corrigir-gelo" value="${ce.gelo_un||0}" min="0" step="1"></div>
+    </div>
+    <button class="btn btn-orange btn-sm" style="width:100%" onclick="salvarCorrecaoCopao()">✓ Salvar valores corrigidos</button>
+  </div>`;
+}
+async function salvarCorrecaoCopao(){
+  const bally=parseFloat(document.getElementById('copao-corrigir-bally').value);
+  const gin=parseFloat(document.getElementById('copao-corrigir-gin').value);
+  const gelo=parseInt(document.getElementById('copao-corrigir-gelo').value);
+  if(isNaN(bally)||isNaN(gin)||isNaN(gelo)||bally<0||gin<0||gelo<0){alert('Preencha os três valores com números válidos (0 ou mais).');return;}
+  if(!confirm(`Confirma corrigir o estoque do Copão para:\nBally: ${bally}ml\nGin: ${gin}ml\nGelo: ${gelo}un\n\nIsso SUBSTITUI os valores atuais.`))return;
+  try{
+    const{error}=await sb.from('copao_estoque').update({bally_ml:bally,gin_ml:gin,gelo_un:gelo,atualizado_em:new Date().toISOString()}).eq('id',1);
+    if(error){alert('Erro ao corrigir estoque: '+error.message);return;}
+    await sincronizarEstoqueCopao();
+    try{await registrarLog('CORREÇÃO ESTOQUE COPÃO',`Bally: ${bally}ml, Gin: ${gin}ml, Gelo: ${gelo}un`);}catch(e){}
+    await renderCopao();
+  }catch(e){alert('Erro inesperado ao corrigir estoque: '+e.message);}
 }
 async function adicionarBallyCopao(){
   const qty=parseInt(document.getElementById('copao-bally-qty').value)||0;
