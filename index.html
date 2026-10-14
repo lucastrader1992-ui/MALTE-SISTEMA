@@ -216,8 +216,8 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <button class="nav-btn adm-only" onclick="goTab('financeiro')">💳 Financeiro</button>
     <button class="nav-btn adm-only" onclick="goTab('compras')">🛍️ Compras</button>
     <button class="nav-btn adm-only" onclick="goTab('cmv')">📉 CMV</button>
-    <button class="nav-btn adm-only" onclick="goTab('comissoes')">💼 Comissões</button>
-    <button class="nav-btn" onclick="goTab('tarefas')">✅ Tarefas</button>
+    <!-- aba Comissões oculta (dados mantidos no Supabase) -->
+    <!-- aba Tarefas oculta (dados mantidos no Supabase) -->
     <button class="nav-btn" onclick="goTab('anotacoes')">📝 Notas</button>
     <button class="nav-btn adm-only" onclick="goTab('relatorios')">📈 Relatórios</button>
     <button class="nav-btn adm-only" onclick="goTab('configuracoes')">⚙️ Config</button>
@@ -637,7 +637,7 @@ async function renderDashboard(){
   <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span style="font-size:12px;color:var(--text2)">Caixa:</span>${caixaInfo}
     <span style="font-size:11px;color:var(--text3)">📅 Dia comercial: ${labelDia} 06:00 → +1d 05:59</span>
-    ${(T||[]).length>0?`<span class="badge badge-orange">${(T||[]).length} tarefa(s) pendente(s)</span>`:''}
+    
   </div>
 
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
