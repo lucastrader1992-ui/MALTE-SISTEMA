@@ -1561,7 +1561,26 @@ async function abrirEntrada(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
   openModal(`<h3>📦 Entrada de Estoque</h3><div class="modal-field"><label>Produto</label><select id="ent-prod">${(P||[]).map(p=>`<option value="${p.id}">${p.emoji} ${p.nome} (estoque: ${p.estoque})</option>`).join('')}</select></div><div class="modal-field"><label>Quantidade</label><input type="number" id="ent-qty" value="12" min="1"></div><div class="modal-field"><label>Custo Total (R$)</label><input type="number" id="ent-custo" value="0" step="0.01"></div><div class="modal-field"><label>Observação</label><input type="text" id="ent-obs" placeholder="Opcional"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEntrada()">Registrar</button></div>`);
 }
-async function confirmarEntrada(){const pid=parseInt(document.getElementById('ent-prod').value);const qty=parseInt(document.getElementById('ent-qty').value)||0;const custo=parseFloat(document.getElementById('ent-custo').value)||0;const obs=document.getElementById('ent-obs')?.value?.trim()||'';const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(isCopao(prod.nome)){alert('O estoque do Copão é controlado pela aba "🥤 Copão", não por Entrada de Estoque. Use a aba Copão para adicionar garrafas de Bally/Gin e unidades de Gelo.');closeModal();return;}await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome,observacao:obs});closeModal();await atualizarTabelaEstoque();}
+async function confirmarEntrada(){
+  if(window._entradaLock)return;window._entradaLock=true;
+  try{
+    const pid=parseInt(document.getElementById('ent-prod').value);
+    const qty=parseInt(document.getElementById('ent-qty').value)||0;
+    const custo=parseFloat(document.getElementById('ent-custo').value)||0;
+    const obs=document.getElementById('ent-obs')?.value?.trim()||'';
+    if(qty<=0){alert('Informe uma quantidade maior que zero.');return;}
+    const{data:prod,error:eP}=await sb.from('produtos').select('*').eq('id',pid).single();
+    if(eP||!prod){alert('Produto não encontrado: '+(eP?.message||''));return;}
+    if(isCopao(prod.nome)){alert('O estoque do Copão é controlado pela aba "🥤 Copão", não por Entrada de Estoque. Use a aba Copão para adicionar garrafas de Bally/Gin e unidades de Gelo.');closeModal();return;}
+    const novo=await ajustarEstoque(pid,qty);
+    const{error:eE}=await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:currentUser.nome,observacao:obs});
+    if(eE)console.error('Estoque somado, mas histórico de entrada não salvo:',eE.message);
+    try{await registrarLog('ENTRADA ESTOQUE',`${prod.nome} +${qty} un (${prod.estoque} → ${novo!=null?novo:prod.estoque+qty})`);}catch(e){}
+    closeModal();await atualizarTabelaEstoque();
+    alert(`✅ ${qty}x ${prod.nome} adicionado.\nEstoque: ${prod.estoque} → ${novo!=null?novo:prod.estoque+qty}`);
+  }catch(e){alert('❌ ERRO: o estoque NÃO foi atualizado.\n'+e.message);}
+  finally{window._entradaLock=false;}
+}
 
 // ══════════════════════════════════════════════
 // 🥤 COPÃO — estoque próprio (pool separado) a partir de Bally/Gin/Gelo
@@ -1633,6 +1652,19 @@ async function devolverComponentesCopao(qty){
   }catch(e){console.error('Erro ao devolver componentes do Copão:',e);}
 }
 
+// Ajuste ATÔMICO de estoque: soma/subtrai direto no banco (evita uma operação apagar a outra quando acontecem ao mesmo tempo)
+async function ajustarEstoque(prodId,delta){
+  const{data,error}=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta});
+  if(!error)return data;
+  if(!/ajustar_estoque|PGRST202|function/i.test(error.message||'')||error.code==='42501')throw error;
+  // fallback (função ainda não criada no Supabase): método antigo
+  const{data:p,error:e1}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
+  if(e1)throw e1;
+  const novo=Math.max(0,(p.estoque||0)+delta);
+  const{error:e2}=await sb.from('produtos').update({estoque:novo}).eq('id',prodId);
+  if(e2)throw e2;
+  return novo;
+}
 // Helpers genéricos usados por TODAS as rotinas de venda (mesa, balcão, festa):
 // decidem sozinhos se o produto é o Copão (desconta dos componentes) ou um produto comum (desconta do próprio estoque)
 async function descontarEstoqueItem(prodId,qty){
@@ -1640,7 +1672,7 @@ async function descontarEstoqueItem(prodId,qty){
     const{data:p}=await sb.from('produtos').select('*').eq('id',prodId).single();
     if(!p)return;
     if(isCopao(p.nome)){await consumirComponentesCopao(qty);return;}
-    await sb.from('produtos').update({estoque:Math.max(0,p.estoque-qty)}).eq('id',prodId);
+    await ajustarEstoque(prodId,-qty);
   }catch(e){console.error('Erro ao descontar estoque:',e);}
 }
 async function devolverEstoqueItem(prodId,qty){
@@ -1648,7 +1680,7 @@ async function devolverEstoqueItem(prodId,qty){
     const{data:p}=await sb.from('produtos').select('*').eq('id',prodId).single();
     if(!p)return;
     if(isCopao(p.nome)){await devolverComponentesCopao(qty);return;}
-    await sb.from('produtos').update({estoque:p.estoque+qty}).eq('id',prodId);
+    await ajustarEstoque(prodId,qty);
   }catch(e){console.error('Erro ao devolver estoque:',e);}
 }
 
@@ -2000,7 +2032,7 @@ async function confirmarEntradaBruno(){
     const{error:eBruno}=await sb.from('entradas_bruno').insert({produto:prod.nome,categoria:prod.cat,qty,custo,observacao:obs,criado_em:tsEntrada});
     if(eBruno){alert('Erro ao salvar: '+eBruno.message);if(btn){btn.disabled=false;btn.textContent='✅ Registrar Entrada';}return;}
     // 2. Soma ao estoque geral
-    await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',pid);
+    try{await ajustarEstoque(pid,qty);}catch(eEst){alert('⚠️ Entrada salva, mas o ESTOQUE NÃO FOI ATUALIZADO: '+eEst.message+'\nConfira o estoque de '+prod.nome+'.');}
     // 3. Registra na tabela entradas geral (ignora erro)
     try{await sb.from('entradas').insert({produto:prod.nome,qty,custo,operador:'Bruno',observacao:'[ENTRADA BRUNO] '+(obs||''),criado_em:tsEntrada});}catch(e2){}
     // 4. Log (ignora erro)
@@ -2019,7 +2051,7 @@ ${qty}x ${prod.nome} adicionado ao estoque geral.`);
 async function removerEntradaBruno(id,produto,qty){
   try{
     const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+    if(prod)await ajustarEstoque(prod.id,-qty);
     await sb.from('entradas_bruno').delete().eq('id',id);
     try{await registrarLog('REMOVEU ENTRADA BRUNO',`${produto} -${qty} un`);}catch(e){}
     alert('✅ Entrada removida. Estoque ajustado.');
@@ -2071,8 +2103,15 @@ async function renderProdutos(){
 async function sugestaoPreco(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128161; Sugestão de Preço</h3><div style="max-height:400px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--bg3)"><th style="padding:8px">Produto</th><th style="padding:8px;text-align:center">Compra</th><th style="padding:8px;text-align:center">+30%</th><th style="padding:8px;text-align:center">+50%</th><th style="padding:8px;text-align:center">+70%</th><th style="padding:8px;text-align:center">Atual</th></tr></thead><tbody>${(P||[]).map(p=>{const s30=p.custo/(1-0.30);const s50=p.custo/(1-0.50);const s70=p.custo/(1-0.70);return`<tr style="border-top:1px solid var(--border)"><td style="padding:8px">${p.emoji} ${p.nome}</td><td style="padding:8px;text-align:center;color:var(--red)">${fmt(p.custo)}</td><td style="padding:8px;text-align:center;color:var(--orange)">${fmt(s30)}</td><td style="padding:8px;text-align:center;color:var(--gold2)">${fmt(s50)}</td><td style="padding:8px;text-align:center;color:var(--green)">${fmt(s70)}</td><td style="padding:8px;text-align:center;font-weight:600">${fmt(p.preco)}</td></tr>`;}).join('')}</tbody></table></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
 async function abrirNovoProduto(){openModal(`<h3>&#128247; Novo Produto</h3><div class="modal-field"><label>Nome</label><input type="text" id="np-nome" placeholder="Nome do produto"></div><div class="modal-field"><label>Categoria</label><select id="np-cat"><option>Cerveja</option><option>Refrigerante</option><option>Água</option><option>Destilado</option><option>Energético</option><option>Suco</option><option>Outro</option></select></div><div class="modal-field"><label>Emoji</label><input type="text" id="np-emoji" value="&#127866;" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra (R$)</label><input type="number" id="np-custo" value="0" step="0.01"></div><div class="modal-field"><label>Preço de Venda (R$)</label><input type="number" id="np-preco" value="0" step="0.01"></div></div><div class="modal-field"><label>Estoque Inicial</label><input type="number" id="np-estoque" value="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarNovoProduto()">Salvar</button></div>`);}
 async function salvarNovoProduto(){const nome=document.getElementById('np-nome').value.trim();if(!nome)return;try{const{error}=await sb.from('produtos').insert({nome,cat:document.getElementById('np-cat').value,emoji:document.getElementById('np-emoji').value||'📦',custo:parseFloat(document.getElementById('np-custo').value)||0,preco:parseFloat(document.getElementById('np-preco').value)||0,estoque:parseInt(document.getElementById('np-estoque').value)||0});if(error){alert('Erro ao salvar produto: '+error.message);return;}closeModal();renderProdutos();if(isCopao(nome))await sincronizarEstoqueCopao();}catch(e){alert('Erro: '+e.message);}}
-async function editarProduto(id){const{data:p}=await sb.from('produtos').select('*').eq('id',id).single();openModal(`<h3>&#9999; Editar Produto</h3>${isCopao(p.nome)?'<div class="alert alert-warn">O campo Estoque deste produto é calculado automaticamente pela aba 🥤 Copão — editar aqui é sobrescrito na próxima sincronização.</div>':''}<div class="modal-field"><label>Nome</label><input type="text" id="ep-nome" value="${p.nome}"></div><div class="modal-field"><label>Categoria</label><select id="ep-cat">${['Cerveja','Refrigerante','Água','Destilado','Energético','Suco','Outro'].map(c=>`<option${c===p.cat?' selected':''}>${c}</option>`).join('')}</select></div><div class="modal-field"><label>Emoji</label><input type="text" id="ep-emoji" value="${p.emoji}" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra</label><input type="number" id="ep-custo" value="${p.custo}" step="0.01"></div><div class="modal-field"><label>Preço de Venda</label><input type="number" id="ep-preco" value="${p.preco}" step="0.01"></div></div><div class="modal-field"><label>Estoque</label><input type="number" id="ep-estoque" value="${p.estoque}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEditarProduto(${id})">Salvar</button></div>`);}
-async function confirmarEditarProduto(id){try{const nome=document.getElementById('ep-nome').value.trim();const{error}=await sb.from('produtos').update({nome,cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0,estoque:parseInt(document.getElementById('ep-estoque').value)||0}).eq('id',id);if(error){alert('Erro ao editar produto: '+error.message);return;}closeModal();renderProdutos();if(isCopao(nome))await sincronizarEstoqueCopao();}catch(e){alert('Erro: '+e.message);}}
+async function editarProduto(id){const{data:p}=await sb.from('produtos').select('*').eq('id',id).single();openModal(`<h3>&#9999; Editar Produto</h3>${isCopao(p.nome)?'<div class="alert alert-warn">O campo Estoque deste produto é calculado automaticamente pela aba 🥤 Copão — editar aqui é sobrescrito na próxima sincronização.</div>':''}<div class="modal-field"><label>Nome</label><input type="text" id="ep-nome" value="${p.nome}"></div><div class="modal-field"><label>Categoria</label><select id="ep-cat">${['Cerveja','Refrigerante','Água','Destilado','Energético','Suco','Outro'].map(c=>`<option${c===p.cat?' selected':''}>${c}</option>`).join('')}</select></div><div class="modal-field"><label>Emoji</label><input type="text" id="ep-emoji" value="${p.emoji}" maxlength="2"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="modal-field"><label>Preço de Compra</label><input type="number" id="ep-custo" value="${p.custo}" step="0.01"></div><div class="modal-field"><label>Preço de Venda</label><input type="number" id="ep-preco" value="${p.preco}" step="0.01"></div></div><div class="modal-field"><label>Estoque</label><input type="number" id="ep-estoque" value="${p.estoque}" data-original="${p.estoque}"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarEditarProduto(${id})">Salvar</button></div>`);}
+async function confirmarEditarProduto(id){try{const nome=document.getElementById('ep-nome').value.trim();
+  const elEst=document.getElementById('ep-estoque');const estDigitado=parseInt(elEst.value);const estOriginal=parseInt(elEst.getAttribute('data-original'));
+  const upd={nome,cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0};
+  const mudouEstoque=!isNaN(estDigitado)&&estDigitado!==estOriginal;
+  if(mudouEstoque){if(!confirm(`Alterar o estoque de ${nome} de ${estOriginal} para ${estDigitado}?`))return;upd.estoque=estDigitado;}
+  const{error}=await sb.from('produtos').update(upd).eq('id',id);if(error){alert('Erro ao editar produto: '+error.message);return;}
+  if(mudouEstoque){try{await registrarLog('CORREÇÃO ESTOQUE',`${nome}: ${estOriginal} → ${estDigitado}`);}catch(e){}}
+  closeModal();renderProdutos();if(isCopao(nome))await sincronizarEstoqueCopao();}catch(e){alert('Erro: '+e.message);}}
 async function removerProduto(id){try{const{error}=await sb.from('produtos').delete().eq('id',id);if(error){alert('Erro ao remover produto: '+error.message);return;}renderProdutos();}catch(e){alert('Erro: '+e.message);}}
 async function gerenciarPromocoes(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128293; Gerenciar Promoções</h3><div style="max-height:380px;overflow-y:auto;">${(P||[]).map(p=>`<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px;margin-bottom:7px;border:1px solid ${p.em_promo?'rgba(192,57,43,0.4)':'var(--border)'};"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;"><div style="font-size:13px;font-weight:600">${p.emoji} ${p.nome}${isCopao(p.nome)?' <span style="font-size:10px;color:var(--gold2)">(Gin cai pra 50ml no copão)</span>':''}</div><div style="font-size:11px;color:var(--text2)">Normal: ${fmt(p.preco)}</div></div><div style="display:flex;align-items:center;gap:7px;"><input type="number" id="promo-${p.id}" value="${p.preco_promo||p.preco}" step="0.01" style="width:90px;padding:5px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;"><button class="btn ${p.em_promo?'btn-danger':'btn-orange'} btn-xs" onclick="togglePromo(${p.id},${!p.em_promo})">${p.em_promo?'Desativar':'Ativar'}</button></div></div>`).join('')}</div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
 async function togglePromo(id,ativar){const preco_promo=parseFloat(document.getElementById('promo-'+id).value)||0;try{const{data:prodAtual,error:errSel}=await sb.from('produtos').select('nome').eq('id',id).single();const{error}=await sb.from('produtos').update({em_promo:ativar,preco_promo}).eq('id',id);if(error){alert('Erro ao atualizar promoção: '+error.message);return;}if(prodAtual&&isCopao(prodAtual.nome))await sincronizarEstoqueCopao();gerenciarPromocoes();}catch(e){alert('Erro: '+e.message);}}
@@ -2201,14 +2240,14 @@ async function alterarStatusCompra(id,novoStatus,statusAtual,qty,produto){
   if(novoStatus==='recebido'&&statusAtual!=='recebido'){
     const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
     if(prod){
-      await sb.from('produtos').update({estoque:prod.estoque+qty}).eq('id',prod.id);
+      await ajustarEstoque(prod.id,qty);
       try{await sb.from('entradas').insert({produto:prod.nome,qty,custo:0,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA]'});}catch(e){}
     }
   }
   // De recebido para outro → desconta estoque
   if(statusAtual==='recebido'&&novoStatus!=='recebido'){
     const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+    if(prod)await ajustarEstoque(prod.id,-qty);
   }
   carregarComprasDia();
 }
@@ -2218,7 +2257,7 @@ async function excluirCompra(id,status,qty,produto){
   try{
     if(status==='recebido'){
       const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-      if(prod)await sb.from('produtos').update({estoque:Math.max(0,prod.estoque-qty)}).eq('id',prod.id);
+      if(prod)await ajustarEstoque(prod.id,-qty);
     }
     const{error}=await sb.from('compras').delete().eq('id',id);
     if(error){alert('Erro ao excluir: '+error.message);return;}
@@ -2295,7 +2334,7 @@ async function salvarCompra(){
     });
     if(eCmp){alert('Erro ao salvar compra: '+eCmp.message);return;}
     if(status==='recebido'){
-      await sb.from('produtos').update({estoque:prod.estoque+qty,custo}).eq('id',pid);
+      await ajustarEstoque(pid,qty);await sb.from('produtos').update({custo}).eq('id',pid);
       try{await sb.from('entradas').insert({produto:prod.nome,qty,custo:total,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA] '+forn});}catch(e2){}
       try{await registrarLog('COMPRA RECEBIDA',`${prod.nome} +${qty} un — ${fmt(total)} — ${forn}`);}catch(e3){}
     }else{
