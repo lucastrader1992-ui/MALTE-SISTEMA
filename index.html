@@ -266,7 +266,58 @@ async function carregarOperadoresLogin(){
 }
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
 let balcaoItens=(()=>{try{return JSON.parse(localStorage.getItem('malte_balcao')||'[]')||[];}catch(e){return[];}})(),payAtual='dinheiro',caixaAberto=null;
-function salvarCarrinhoBalcao(){try{localStorage.setItem('malte_balcao',JSON.stringify(balcaoItens));}catch(e){}}
+function salvarCarrinhoBalcao(){try{localStorage.setItem('malte_balcao',JSON.stringify(balcaoItens));}catch(e){}agendarSyncBalcao();}
+// ── Carrinho do Balcão espelhado no Supabase (o ADM vê de qualquer aparelho) ──
+function idAparelho(){
+  let id=null;try{id=localStorage.getItem('malte_device_id');}catch(e){}
+  if(!id){const ua=navigator.userAgent||'';const tipo=/iPad|Tablet|SM-T|Tab/i.test(ua)||(/Android/i.test(ua)&&!/Mobile/i.test(ua))?'Tablet':(/Mobi|Android|iPhone/i.test(ua)?'Celular':'PC');
+    id=tipo+'-'+Math.random().toString(36).slice(2,6).toUpperCase();try{localStorage.setItem('malte_device_id',id);}catch(e){}}
+  return id;
+}
+let _syncBalcaoT=null;
+function agendarSyncBalcao(){clearTimeout(_syncBalcaoT);_syncBalcaoT=setTimeout(syncCarrinhoBalcaoRemoto,600);}
+async function syncCarrinhoBalcaoRemoto(){
+  try{
+    if(typeof sb==='undefined'||!sb)return;
+    const device_id=idAparelho();
+    if(balcaoItens.length){
+      const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
+      await sb.from('balcao_carrinhos').upsert({device_id,operador:currentUser?currentUser.nome:'(sem login)',itens:balcaoItens,total,atualizado_em:new Date().toISOString()});
+    }else{
+      await sb.from('balcao_carrinhos').delete().eq('device_id',device_id);
+    }
+  }catch(e){console.warn('sync balcão:',e);}
+}
+// Aviso para o ADM (aparece em qualquer aba, em qualquer aparelho)
+async function atualizarAvisoBalcaoAdm(){
+  let el=document.getElementById('aviso-balcao-adm');
+  if(!currentUser||currentUser.id!=='adm'){if(el)el.style.display='none';return;}
+  try{
+    const{data,error}=await sb.from('balcao_carrinhos').select('*').order('atualizado_em',{ascending:false});
+    if(error)return;
+    window._balcaoAbertos=data||[];
+    if(!el){el=document.createElement('div');el.id='aviso-balcao-adm';
+      el.style.cssText='position:fixed;left:12px;bottom:12px;z-index:9000;background:#b45309;color:#fff;padding:10px 16px;border-radius:24px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;';
+      el.onclick=abrirModalBalcaoAbertos;document.body.appendChild(el);}
+    const L=window._balcaoAbertos;
+    if(!L.length){el.style.display='none';return;}
+    const tot=L.reduce((s,c)=>s+Number(c.total||0),0);
+    el.textContent=`🛒 Balcão em aberto: ${fmt(tot)} (${L.length} ${L.length>1?'aparelhos':'aparelho'})`;
+    el.style.display='';
+  }catch(e){}
+}
+function abrirModalBalcaoAbertos(){
+  const L=window._balcaoAbertos||[];
+  const agora=Date.now();
+  const html=L.map(c=>{const min=Math.round((agora-new Date(c.atualizado_em).getTime())/60000);
+    const itens=(c.itens||[]).map(i=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0"><span>${i.qty}x ${i.nome}</span><span>${fmt(i.preco*i.qty)}</span></div>`).join('');
+    return `<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>${c.device_id} · ${c.operador||''}</b><span style="color:var(--text2);font-size:12px">${min<1?'agora':('há '+min+' min')}</span></div>
+      ${itens}<div style="text-align:right;font-weight:800;color:var(--gold2);margin-top:6px">Total: ${fmt(c.total)}</div></div>`;}).join('')||'<p style="color:var(--text2)">Nenhum carrinho em aberto.</p>';
+  openModal(`<h3>🛒 Balcão em aberto (não finalizado)</h3><p style="color:var(--text2);font-size:12px;margin-bottom:12px">Esses itens ainda NÃO entraram no caixa nem no estoque. Só entram quando o aparelho clicar em "Finalizar".</p>${html}<div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);
+}
+setTimeout(()=>{syncCarrinhoBalcaoRemoto();atualizarAvisoBalcaoAdm();},2000);
+setInterval(()=>{if(balcaoItens.length)syncCarrinhoBalcaoRemoto();atualizarAvisoBalcaoAdm();},15000);
 let splitPagamentos=[];
 let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null,festaPollingInterval=null,dashboardPollingInterval=null;
 function stopGlobalPolling(){if(globalPollingInterval){clearInterval(globalPollingInterval);globalPollingInterval=null;}}
@@ -417,6 +468,7 @@ async function doLogin(){
   document.getElementById('top-role-badge').textContent=u.toUpperCase();
   if(u!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
   goTab('dashboard');
+  setTimeout(()=>{syncCarrinhoBalcaoRemoto();atualizarAvisoBalcaoAdm();},800);
 }
 function doLogout(){currentUser=null;localStorage.removeItem('malte_sessao');stopMesaPolling();stopEstoquePolling();stopGlobalPolling();document.getElementById('app').style.display='none';document.getElementById('login-screen').style.display='flex';document.getElementById('login-pass').value='';document.getElementById('login-err').textContent='';document.querySelectorAll('.adm-only').forEach(b=>b.style.display='');}
 function pedirSenhaAdm(msg,cb){if(currentUser&&currentUser.id==='adm'){cb();return;}senhaCallback=cb;document.getElementById('senha-msg').textContent=msg||'Digite a senha do Administrador';document.getElementById('senha-input').value='';document.getElementById('senha-err').textContent='';document.getElementById('senha-overlay').classList.add('open');setTimeout(()=>document.getElementById('senha-input').focus(),100);}
