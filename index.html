@@ -1063,7 +1063,7 @@ async function modalMesaAberta(id){
     </div>
     <div style="max-height:230px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px;padding:2px;">
       ${(prods||[]).map(p=>`<button type="button" onclick="addItemMesaTouch(${id},${p.id})" style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:14px 8px;min-height:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;text-align:center;position:relative;">
-        <span class="badge ${p.estoque<=0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}" style="position:absolute;top:4px;right:4px;font-size:9px;">${p.estoque}</span>
+        <span class="badge ${p.estoque<=0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}" style="position:absolute;top:4px;right:4px;font-size:15px;font-weight:800;padding:3px 9px;">${p.estoque}</span>
         <div style="font-size:24px">${p.emoji}</div>
         <div style="font-size:12px;font-weight:600;color:var(--text);line-height:1.2">${p.nome}</div>
         <div style="font-size:13px;font-weight:700;color:${p.em_promo?'var(--red)':'var(--gold2)'}">${p.em_promo&&p.preco_promo?fmt(p.preco_promo):fmt(p.preco)}</div>
@@ -1184,7 +1184,7 @@ async function renderBalcao(){
     ${P.map(p=>`<div class="prod-card" style="touch-action:manipulation" onclick="addBalcao(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.em_promo&&p.preco_promo?p.preco_promo:p.preco},'${p.emoji}')">
       ${p.em_promo?`<div class="promo-badge">PROMO</div>`:''}
       <div style="font-size:22px">${p.emoji}</div><div style="font-size:11px;font-weight:600">${p.nome}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:${p.em_promo?'var(--red)':'var(--gold2)'}">${p.em_promo&&p.preco_promo?fmt(p.preco_promo):fmt(p.preco)}</span><span class="badge ${p.estoque<20?'badge-red':'badge-green'}" style="font-size:9px">${p.estoque}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:${p.em_promo?'var(--red)':'var(--gold2)'}">${p.em_promo&&p.preco_promo?fmt(p.preco_promo):fmt(p.preco)}</span><span class="badge ${p.estoque<20?'badge-red':'badge-green'}" style="font-size:15px;font-weight:800;padding:3px 9px">${p.estoque}</span></div>
     </div>`).join('')}
   </div></div>
   <div style="position:sticky;top:70px;"><div id="balcao-cart" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;"></div></div></div>`;
