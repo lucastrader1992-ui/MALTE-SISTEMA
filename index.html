@@ -265,59 +265,44 @@ async function carregarOperadoresLogin(){
   sel.innerHTML=ativos.map(o=>`<option value="${o.id}">${o.nome}</option>`).join('');
 }
 let currentUser=null,currentTab='dashboard',senhaCallback=null;
-let balcaoItens=(()=>{try{return JSON.parse(localStorage.getItem('malte_balcao')||'[]')||[];}catch(e){return[];}})(),payAtual='dinheiro',caixaAberto=null;
-function salvarCarrinhoBalcao(){try{localStorage.setItem('malte_balcao',JSON.stringify(balcaoItens));}catch(e){}agendarSyncBalcao();}
-// ── Carrinho do Balcão espelhado no Supabase (o ADM vê de qualquer aparelho) ──
-function idAparelho(){
-  let id=null;try{id=localStorage.getItem('malte_device_id');}catch(e){}
-  if(!id){const ua=navigator.userAgent||'';const tipo=/iPad|Tablet|SM-T|Tab/i.test(ua)||(/Android/i.test(ua)&&!/Mobile/i.test(ua))?'Tablet':(/Mobi|Android|iPhone/i.test(ua)?'Celular':'PC');
-    id=tipo+'-'+Math.random().toString(36).slice(2,6).toUpperCase();try{localStorage.setItem('malte_device_id',id);}catch(e){}}
-  return id;
+let balcaoItens=[],balcaoRows=[],payAtual='dinheiro',caixaAberto=null;
+// ══ BALCÃO COMPARTILHADO: um carrinho só, igual em todos os aparelhos (tabela balcao_itens) ══
+function agregarBalcao(rows){const m={};(rows||[]).forEach(r=>{const k=r.prod_id+'|'+r.preco;if(!m[k])m[k]={prodId:r.prod_id,nome:r.nome,preco:Number(r.preco),qty:0,rows:[]};m[k].qty+=r.qty;m[k].rows.push(r);});return Object.values(m);}
+async function carregarBalcaoRemoto(){
+  const{data,error}=await sb.from('balcao_itens').select('*').order('id',{ascending:true});
+  if(error){console.error('balcao_itens:',error.message);window._balcaoErro=error.message;return false;}
+  window._balcaoErro=null;balcaoRows=data||[];balcaoItens=agregarBalcao(balcaoRows);
+  await migrarCarrinhoLocalBalcao();
+  return true;
 }
-let _syncBalcaoT=null;
-function agendarSyncBalcao(){clearTimeout(_syncBalcaoT);_syncBalcaoT=setTimeout(syncCarrinhoBalcaoRemoto,600);}
-async function syncCarrinhoBalcaoRemoto(){
+// carrinho antigo que ficou salvo só no aparelho → sobe para o carrinho compartilhado (uma vez)
+async function migrarCarrinhoLocalBalcao(){
+  let loc=[];try{loc=JSON.parse(localStorage.getItem('malte_balcao')||'[]')||[];}catch(e){}
+  if(!loc.length)return;
   try{
-    if(typeof sb==='undefined'||!sb)return;
-    const device_id=idAparelho();
-    if(balcaoItens.length){
-      const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
-      await sb.from('balcao_carrinhos').upsert({device_id,operador:currentUser?currentUser.nome:'(sem login)',itens:balcaoItens,total,atualizado_em:new Date().toISOString()});
-    }else{
-      await sb.from('balcao_carrinhos').delete().eq('device_id',device_id);
-    }
-  }catch(e){console.warn('sync balcão:',e);}
-}
-// Aviso para o ADM (aparece em qualquer aba, em qualquer aparelho)
-async function atualizarAvisoBalcaoAdm(){
-  let el=document.getElementById('aviso-balcao-adm');
-  if(!currentUser||currentUser.id!=='adm'){if(el)el.style.display='none';return;}
-  try{
-    const{data,error}=await sb.from('balcao_carrinhos').select('*').order('atualizado_em',{ascending:false});
-    if(error)return;
-    window._balcaoAbertos=data||[];
-    if(!el){el=document.createElement('div');el.id='aviso-balcao-adm';
-      el.style.cssText='position:fixed;left:12px;bottom:12px;z-index:9000;background:#b45309;color:#fff;padding:10px 16px;border-radius:24px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;';
-      el.onclick=abrirModalBalcaoAbertos;document.body.appendChild(el);}
-    const L=window._balcaoAbertos;
-    if(!L.length){el.style.display='none';return;}
-    const tot=L.reduce((s,c)=>s+Number(c.total||0),0);
-    el.textContent=`🛒 Balcão em aberto: ${fmt(tot)} (${L.length} ${L.length>1?'aparelhos':'aparelho'})`;
-    el.style.display='';
+    const rows=loc.map(i=>({prod_id:i.prodId,nome:i.nome,preco:i.preco,qty:i.qty,operador:currentUser?currentUser.nome:''}));
+    const{error}=await sb.from('balcao_itens').insert(rows);
+    if(!error){localStorage.removeItem('malte_balcao');const{data}=await sb.from('balcao_itens').select('*').order('id',{ascending:true});balcaoRows=data||[];balcaoItens=agregarBalcao(balcaoRows);}
   }catch(e){}
 }
-function abrirModalBalcaoAbertos(){
-  const L=window._balcaoAbertos||[];
-  const agora=Date.now();
-  const html=L.map(c=>{const min=Math.round((agora-new Date(c.atualizado_em).getTime())/60000);
-    const itens=(c.itens||[]).map(i=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0"><span>${i.qty}x ${i.nome}</span><span>${fmt(i.preco*i.qty)}</span></div>`).join('');
-    return `<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:12px;margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>${c.device_id} · ${c.operador||''}</b><span style="color:var(--text2);font-size:12px">${min<1?'agora':('há '+min+' min')}</span></div>
-      ${itens}<div style="text-align:right;font-weight:800;color:var(--gold2);margin-top:6px">Total: ${fmt(c.total)}</div></div>`;}).join('')||'<p style="color:var(--text2)">Nenhum carrinho em aberto.</p>';
-  openModal(`<h3>🛒 Balcão em aberto (não finalizado)</h3><p style="color:var(--text2);font-size:12px;margin-bottom:12px">Esses itens ainda NÃO entraram no caixa nem no estoque. Só entram quando o aparelho clicar em "Finalizar".</p>${html}<div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);
+function salvarCarrinhoBalcao(){}
+async function atualizarAvisoBalcaoAdm(){
+  let el=document.getElementById('aviso-balcao-adm');
+  if(!currentUser||currentUser.id!=='adm'||currentTab==='balcao'){if(el)el.style.display='none';return;}
+  try{
+    const{data,error}=await sb.from('balcao_itens').select('qty,preco');
+    if(error)return;
+    const L=data||[];
+    if(!el){el=document.createElement('div');el.id='aviso-balcao-adm';
+      el.style.cssText='position:fixed;left:12px;bottom:12px;z-index:9000;background:#b45309;color:#fff;padding:10px 16px;border-radius:24px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;';
+      el.onclick=()=>goTab('balcao');document.body.appendChild(el);}
+    if(!L.length){el.style.display='none';return;}
+    const tot=L.reduce((s,r)=>s+Number(r.preco)*r.qty,0),n=L.reduce((s,r)=>s+r.qty,0);
+    el.textContent=`🛒 Balcão aberto: ${fmt(tot)} (${n} ${n>1?'itens':'item'})`;el.style.display='';
+  }catch(e){}
 }
-setTimeout(()=>{syncCarrinhoBalcaoRemoto();atualizarAvisoBalcaoAdm();},2000);
-setInterval(()=>{if(balcaoItens.length)syncCarrinhoBalcaoRemoto();atualizarAvisoBalcaoAdm();},15000);
+setTimeout(atualizarAvisoBalcaoAdm,2000);
+setInterval(atualizarAvisoBalcaoAdm,10000);
 let splitPagamentos=[];
 let mesaPollingInterval=null,estoquePollingInterval=null,globalPollingInterval=null,festaPollingInterval=null,dashboardPollingInterval=null;
 function stopGlobalPolling(){if(globalPollingInterval){clearInterval(globalPollingInterval);globalPollingInterval=null;}}
@@ -468,7 +453,7 @@ async function doLogin(){
   document.getElementById('top-role-badge').textContent=u.toUpperCase();
   if(u!=='adm')document.querySelectorAll('.adm-only').forEach(b=>b.style.display='none');
   goTab('dashboard');
-  setTimeout(()=>{syncCarrinhoBalcaoRemoto();atualizarAvisoBalcaoAdm();},800);
+  setTimeout(atualizarAvisoBalcaoAdm,800);
 }
 function doLogout(){currentUser=null;localStorage.removeItem('malte_sessao');stopMesaPolling();stopEstoquePolling();stopGlobalPolling();document.getElementById('app').style.display='none';document.getElementById('login-screen').style.display='flex';document.getElementById('login-pass').value='';document.getElementById('login-err').textContent='';document.querySelectorAll('.adm-only').forEach(b=>b.style.display='');}
 function pedirSenhaAdm(msg,cb){if(currentUser&&currentUser.id==='adm'){cb();return;}senhaCallback=cb;document.getElementById('senha-msg').textContent=msg||'Digite a senha do Administrador';document.getElementById('senha-input').value='';document.getElementById('senha-err').textContent='';document.getElementById('senha-overlay').classList.add('open');setTimeout(()=>document.getElementById('senha-input').focus(),100);}
@@ -488,7 +473,7 @@ function goTab(tab){
 
   const pollMap={
     caixa:()=>{ if(!modalAberto())carregarCaixaDia(); },
-    balcao:renderBalcao,
+    balcao:()=>{},
     produtos:renderProdutos,
     financeiro:renderFinanceiro,
     compras:()=>{ if(!modalAberto())carregarComprasDia(); },
@@ -1193,53 +1178,97 @@ async function fecharMesaVenda(id){
 async function cancelarMesa(id){const d=async()=>{try{const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);const I=itens||[];for(const i of I){await devolverEstoqueItem(i.prod_id,i.qty);}await sb.from('mesa_itens').delete().eq('mesa_id',id);await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);closeModal();renderMesas();}catch(e){alert('Erro ao cancelar mesa: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Cancelar mesa requer senha ADM',d);}}
 
 async function renderBalcao(){
-  salvarCarrinhoBalcao();
-  const{data:prods}=await sb.from('produtos').select('*').order('nome');const P=prods||[];const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
+  const[{data:prods}]=await Promise.all([sb.from('produtos').select('*').order('nome'),carregarBalcaoRemoto()]);const P=prods||[];
   document.getElementById('tab-content').innerHTML=`<div style="display:grid;grid-template-columns:1fr 280px;gap:14px;align-items:start;">
   <div><div class="section-hdr"><div class="section-title">Produtos</div></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:9px;">
-    ${P.map(p=>`<div class="prod-card" onclick="addBalcao(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.em_promo&&p.preco_promo?p.preco_promo:p.preco},'${p.emoji}')">
+    ${P.map(p=>`<div class="prod-card" style="touch-action:manipulation" onclick="addBalcao(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.em_promo&&p.preco_promo?p.preco_promo:p.preco},'${p.emoji}')">
       ${p.em_promo?`<div class="promo-badge">PROMO</div>`:''}
       <div style="font-size:22px">${p.emoji}</div><div style="font-size:11px;font-weight:600">${p.nome}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:${p.em_promo?'var(--red)':'var(--gold2)'}">${p.em_promo&&p.preco_promo?fmt(p.preco_promo):fmt(p.preco)}</span><span class="badge ${p.estoque<20?'badge-red':'badge-green'}" style="font-size:9px">${p.estoque}</span></div>
     </div>`).join('')}
   </div></div>
-  <div style="position:sticky;top:70px;"><div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;">
-    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🛒 Carrinho</div>
+  <div style="position:sticky;top:70px;"><div id="balcao-cart" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;"></div></div></div>`;
+  desenharCarrinhoBalcao();
+}
+function desenharCarrinhoBalcao(){
+  const el=document.getElementById('balcao-cart');if(!el)return;
+  const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);
+  const pay=['dinheiro','pix','debito','credito'].includes(payAtual)?payAtual:'dinheiro';
+  el.innerHTML=`<div style="font-size:14px;font-weight:600;margin-bottom:4px">🛒 Carrinho <span style="font-size:10px;color:var(--text2);font-weight:400">· compartilhado</span></div>
+    ${window._balcaoErro?`<div style="color:var(--red);font-size:11px;margin-bottom:6px">Sem conexão com o carrinho compartilhado: ${window._balcaoErro}</div>`:''}
     ${balcaoItens.length===0?`<div class="empty" style="padding:24px"><div class="empty-icon">🛒</div><p>Vazio</p></div>`:`
-    <div style="max-height:220px;overflow-y:auto;margin-bottom:8px;">${balcaoItens.map((item,idx)=>`<div class="item-row"><div><div style="font-size:11px;font-weight:500">${item.nome}</div><div style="font-size:10px;color:var(--text2)">${fmt(item.preco*item.qty)}</div></div><div class="qty-ctrl"><button class="qty-btn" onclick="qtyBalcao(${idx},-1)">−</button><span class="qty-num">${item.qty}</span><button class="qty-btn" onclick="qtyBalcao(${idx},1)">+</button></div></div>`).join('')}</div>
+    <div style="max-height:260px;overflow-y:auto;margin-bottom:8px;">${balcaoItens.map((item,idx)=>`<div class="item-row"><div><div style="font-size:11px;font-weight:500">${item.nome}</div><div style="font-size:10px;color:var(--text2)">${fmt(item.preco*item.qty)}</div></div><div class="qty-ctrl"><button class="qty-btn" onclick="qtyBalcao(${idx},-1)">−</button><span class="qty-num">${item.qty}</span><button class="qty-btn" onclick="qtyBalcao(${idx},1)">+</button></div></div>`).join('')}</div>
     <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;"><span>Total</span><span style="color:var(--gold2)">${fmt(total)}</span></div></div>
-    <div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${total})">🔀 Dividir</button></div>
+    <div class="pay-methods">${[['dinheiro','💵 Dinheiro'],['pix','📱 PIX'],['debito','💳 Débito'],['credito','💳 Crédito']].map(([k,t])=>`<button class="pay-btn ${k===pay?'sel':''}" id="pay-${k}" onclick="selPay('${k}')">${t}</button>`).join('')}<button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${total})">🔀 Dividir</button></div>
     <div id="split-area" style="display:none;"></div>
     <button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="finalizarBalcao()">✓ Finalizar</button>
-    <button class="btn btn-secondary" style="width:100%;margin-top:5px" onclick="limparBalcao()">Limpar</button>`}
-  </div></div></div>`;
+    <button class="btn btn-secondary" style="width:100%;margin-top:5px" onclick="limparBalcao()">Limpar</button>`}`;
 }
-function addBalcao(pid,nome,preco,emoji){const e=balcaoItens.find(i=>i.prodId===pid);if(e)e.qty++;else balcaoItens.push({prodId:pid,nome:emoji+' '+nome,preco,qty:1});renderBalcao();}
+// atualização automática do carrinho (vê o que os outros aparelhos colocaram)
+async function atualizarCarrinhoBalcaoUI(){
+  if(window._balcaoMexendo||window._finalizandoBalcao)return;
+  const sp=document.getElementById('split-area');if(sp&&sp.style.display!=='none')return;
+  const antes=JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]));
+  await carregarBalcaoRemoto();
+  if(JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]))!==antes)desenharCarrinhoBalcao();
+}
+setInterval(()=>{if(typeof currentTab!=='undefined'&&currentTab==='balcao'&&!modalAberto())atualizarCarrinhoBalcaoUI();},3000);
+async function addBalcao(pid,nome,preco,emoji){
+  const nomeFull=emoji+' '+nome;
+  // mostra na hora
+  const e=balcaoItens.find(i=>i.prodId===pid&&i.preco===Number(preco));if(e)e.qty++;else balcaoItens.push({prodId:pid,nome:nomeFull,preco:Number(preco),qty:1,rows:[]});
+  desenharCarrinhoBalcao();
+  window._balcaoMexendo=(window._balcaoMexendo||0)+1;
+  try{
+    const{error}=await sb.from('balcao_itens').insert({prod_id:pid,nome:nomeFull,preco,qty:1,operador:currentUser?currentUser.nome:''});
+    if(error)throw error;
+  }catch(err){alert('Erro ao adicionar no carrinho: '+err.message);}
+  finally{window._balcaoMexendo--;if(!window._balcaoMexendo){await carregarBalcaoRemoto();desenharCarrinhoBalcao();}}
+}
 function qtyBalcao(idx,d){
   const item=balcaoItens[idx];if(!item)return;
-  if(d>0){item.qty+=d;renderBalcao();return;}
+  if(d>0){addBalcao(item.prodId,item.nome.replace(/^\S+\s/,''),item.preco,item.nome.split(' ')[0]);return;}
   pedirSenhaAdm('Remover item do balcão requer senha ADM',async()=>{
-    const it=balcaoItens[idx];if(!it)return;
-    it.qty+=d;if(it.qty<=0)balcaoItens.splice(idx,1);
-    try{await registrarLog('BALCÃO - REMOVEU ITEM',`${it.nome} -1 (operador: ${currentUser?currentUser.nome:'?'})`);}catch(e){}
-    renderBalcao();
+    await carregarBalcaoRemoto();
+    const it=balcaoItens.find(i=>i.prodId===item.prodId&&i.preco===item.preco);if(!it||!it.rows.length){desenharCarrinhoBalcao();return;}
+    const r=it.rows[it.rows.length-1];
+    try{
+      if(r.qty>1)await sb.from('balcao_itens').update({qty:r.qty-1}).eq('id',r.id);else await sb.from('balcao_itens').delete().eq('id',r.id);
+      try{await registrarLog('BALCÃO - REMOVEU ITEM',`${it.nome} -1 (por: ${currentUser?currentUser.nome:'?'})`);}catch(e){}
+    }catch(e){alert('Erro ao remover: '+e.message);}
+    await carregarBalcaoRemoto();desenharCarrinhoBalcao();
   });
 }
 function limparBalcao(){
   if(!balcaoItens.length)return;
   pedirSenhaAdm('Limpar o carrinho do balcão requer senha ADM',async()=>{
     if(!confirm('Limpar todos os itens do carrinho?'))return;
-    const resumo=balcaoItens.map(i=>`${i.qty}x ${i.nome}`).join(', ');
-    balcaoItens=[];
-    try{await registrarLog('BALCÃO - LIMPOU CARRINHO',`${resumo} (operador: ${currentUser?currentUser.nome:'?'})`);}catch(e){}
-    renderBalcao();
+    await carregarBalcaoRemoto();
+    const ids=balcaoRows.map(r=>r.id);const resumo=balcaoItens.map(i=>`${i.qty}x ${i.nome}`).join(', ');
+    if(ids.length){const{error}=await sb.from('balcao_itens').delete().in('id',ids);if(error){alert('Erro ao limpar: '+error.message);return;}}
+    try{await registrarLog('BALCÃO - LIMPOU CARRINHO',`${resumo} (por: ${currentUser?currentUser.nome:'?'})`);}catch(e){}
+    await carregarBalcaoRemoto();desenharCarrinhoBalcao();
   });
 }
 async function finalizarBalcao(){
-  if(!balcaoItens.length||window._finalizandoBalcao)return;window._finalizandoBalcao=true;
-  try{const total=balcaoItens.reduce((s,i)=>s+i.preco*i.qty,0);const{data:venda}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
-  if(venda){await sb.from('venda_itens').insert(balcaoItens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));for(const i of balcaoItens){await descontarEstoqueItem(i.prodId,i.qty);}balcaoItens=[];salvarCarrinhoBalcao();await verComprovante(venda.id);}}
-  catch(e){console.error(e);alert('Erro ao finalizar. Tente novamente.');}finally{window._finalizandoBalcao=false;}
+  if(window._finalizandoBalcao)return;window._finalizandoBalcao=true;
+  try{
+    // espera os toques pendentes e pega o carrinho atualizado do banco
+    let n=0;while(window._balcaoMexendo&&n<50){await new Promise(r=>setTimeout(r,100));n++;}
+    const ok=await carregarBalcaoRemoto();if(!ok)throw new Error('sem conexão com o carrinho');
+    const rowsSnap=balcaoRows.slice();const itens=agregarBalcao(rowsSnap);
+    if(!itens.length){desenharCarrinhoBalcao();return;}
+    const total=itens.reduce((s,i)=>s+i.preco*i.qty,0);
+    const{data:venda,error:eV}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
+    if(eV||!venda)throw new Error(eV?eV.message:'venda não criada');
+    // tira do carrinho compartilhado primeiro (evita outro aparelho finalizar de novo)
+    await sb.from('balcao_itens').delete().in('id',rowsSnap.map(r=>r.id));
+    await sb.from('venda_itens').insert(itens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
+    for(const i of itens){await descontarEstoqueItem(i.prodId,i.qty);}
+    balcaoRows=[];balcaoItens=[];payAtual='dinheiro';
+    await verComprovante(venda.id);
+  }catch(e){console.error(e);alert('Erro ao finalizar: '+e.message+'. Tente novamente.');}
+  finally{window._finalizandoBalcao=false;}
 }
 
 let festaAtual=null,festaVendidos={},festaRetirados={},lastFestaEvent=null;
