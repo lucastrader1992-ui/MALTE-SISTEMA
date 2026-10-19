@@ -280,7 +280,7 @@ async function migrarCarrinhoLocalBalcao(){
   let loc=[];try{loc=JSON.parse(localStorage.getItem('malte_balcao')||'[]')||[];}catch(e){}
   if(!loc.length)return;
   try{
-    const rows=loc.map(i=>({prod_id:i.prodId,nome:i.nome,preco:i.preco,qty:i.qty,operador:currentUser?currentUser.nome:''}));
+    const rows=loc.map(i=>({prod_id:i.prodId,nome:i.nome,preco:i.preco,qty:i.qty,operador:currentUser?currentUser.nome:''}));// estoque baixa no Finalizar
     const{error}=await sb.from('balcao_itens').insert(rows);
     if(!error){localStorage.removeItem('malte_balcao');const{data}=await sb.from('balcao_itens').select('*').order('id',{ascending:true});balcaoRows=data||[];balcaoItens=agregarBalcao(balcaoRows);}
   }catch(e){}
@@ -1073,8 +1073,8 @@ async function modalMesaAberta(id){
   <div style="max-height:180px;overflow-y:auto;margin-bottom:10px;">${I.length===0?'<div class="empty" style="padding:20px"><p>Nenhum item</p></div>':I.map(i=>`<div class="item-row"><div><div style="font-size:12px;font-weight:500">${i.nome}</div><div style="font-size:11px;color:var(--text2)">${i.qty}x ${fmt(i.preco)} = <b style="color:var(--gold2)">${fmt(Number(i.preco)*i.qty)}</b></div></div><div style="display:flex;gap:6px;align-items:center"><button class="btn btn-xs" style="background:var(--green);color:#fff;border:none;min-width:34px;font-size:16px;font-weight:700" onclick="maisUmItemMesa(${i.id},${id})" title="Adicionar mais 1">+</button><button class="btn btn-danger btn-xs" onclick="removerItemMesa(${i.id},${id})">−</button></div></div>`).join('')}</div>
   ${I.length>0?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${restante})">🔀 Dividir</button></div><div id="split-area" style="display:none;"></div><div style="display:flex;gap:7px;margin-top:10px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="fecharMesaVenda(${id})">✓ Fechar Mesa</button></div></div>`:`<div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button></div>`}`);
 }
-async function addItemMesa(mesaId){try{const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
-async function addItemMesaTouch(mesaId,pid){try{const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(!prod)return;if((prod.estoque||0)<=0){if(!confirm(`⚠️ ${prod.nome} está com estoque ZERADO. Adicionar mesmo assim?`))return;}const preco=prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco;const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
+async function addItemMesa(mesaId){try{const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty,'mesa '+mesaId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
+async function addItemMesaTouch(mesaId,pid){try{const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(!prod)return;if((prod.estoque||0)<=0){if(!confirm(`⚠️ ${prod.nome} está com estoque ZERADO. Adicionar mesmo assim?`))return;}const preco=prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco;const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty,'mesa '+mesaId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
 
 // ══════════════════════════════════════════════
 // 💵 PAGAMENTO PARCIAL DA MESA (sem fechar a mesa)
@@ -1153,7 +1153,7 @@ async function maisUmItemMesa(itemId,mesaId){
     if(prod&&(prod.estoque||0)<=0){if(!confirm(`⚠️ ${prod.nome} está com estoque ZERADO. Adicionar mesmo assim?`))return;}
     const{error:eU}=await sb.from('mesa_itens').update({qty:item.qty+1}).eq('id',itemId);
     if(eU)throw new Error(eU.message);
-    await descontarEstoqueItem(item.prod_id,1);
+    await descontarEstoqueItem(item.prod_id,1,'mesa '+mesaId+' (+1)');
     await modalMesaAberta(mesaId);
   }catch(e){alert('Erro ao adicionar mais 1: '+e.message);}
   finally{window._maisUmLock=false;}
@@ -1184,7 +1184,7 @@ async function renderBalcao(){
     ${P.map(p=>`<div class="prod-card" style="touch-action:manipulation" onclick="addBalcao(${p.id},'${p.nome.replace(/'/g,"\\'")}',${p.em_promo&&p.preco_promo?p.preco_promo:p.preco},'${p.emoji}')">
       ${p.em_promo?`<div class="promo-badge">PROMO</div>`:''}
       <div style="font-size:22px">${p.emoji}</div><div style="font-size:11px;font-weight:600">${p.nome}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:${p.em_promo?'var(--red)':'var(--gold2)'}">${p.em_promo&&p.preco_promo?fmt(p.preco_promo):fmt(p.preco)}</span><span class="badge ${p.estoque<20?'badge-red':'badge-green'}" style="font-size:15px;font-weight:800;padding:3px 9px">${p.estoque}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:700;color:${p.em_promo?'var(--red)':'var(--gold2)'}">${p.em_promo&&p.preco_promo?fmt(p.preco_promo):fmt(p.preco)}</span><span id="bal-est-${p.id}" class="badge ${p.estoque<20?'badge-red':'badge-green'}" style="font-size:15px;font-weight:800;padding:3px 9px">${p.estoque}</span></div>
     </div>`).join('')}
   </div></div>
   <div style="position:sticky;top:70px;"><div id="balcao-cart" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;"></div></div></div>`;
@@ -1211,6 +1211,10 @@ async function atualizarCarrinhoBalcaoUI(){
   const antes=JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]));
   await carregarBalcaoRemoto();
   if(JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]))!==antes)desenharCarrinhoBalcao();
+  atualizarBadgesEstoqueBalcao();
+}
+async function atualizarBadgesEstoqueBalcao(){
+  try{const{data}=await sb.from('produtos').select('id,estoque');(data||[]).forEach(p=>{const el=document.getElementById('bal-est-'+p.id);if(el&&el.textContent!=String(p.estoque)){el.textContent=p.estoque;el.className='badge '+(p.estoque<20?'badge-red':'badge-green');}});}catch(e){}
 }
 setInterval(()=>{if(typeof currentTab!=='undefined'&&currentTab==='balcao'&&!modalAberto())atualizarCarrinhoBalcaoUI();},3000);
 async function addBalcao(pid,nome,preco,emoji){
@@ -1220,10 +1224,17 @@ async function addBalcao(pid,nome,preco,emoji){
   desenharCarrinhoBalcao();
   window._balcaoMexendo=(window._balcaoMexendo||0)+1;
   try{
-    const{error}=await sb.from('balcao_itens').insert({prod_id:pid,nome:nomeFull,preco,qty:1,operador:currentUser?currentUser.nome:''});
-    if(error)throw error;
+    let{error}=await sb.from('balcao_itens').insert({prod_id:pid,nome:nomeFull,preco,qty:1,operador:currentUser?currentUser.nome:'',estoque_baixado:true});
+    if(error&&/estoque_baixado/i.test(error.message||'')){
+      // coluna ainda não criada: registra sem baixar (o Finalizar baixa)
+      ({error}=await sb.from('balcao_itens').insert({prod_id:pid,nome:nomeFull,preco,qty:1,operador:currentUser?currentUser.nome:''}));
+      if(error)throw error;
+    }else{
+      if(error)throw error;
+      await descontarEstoqueItem(pid,1,'balcao');
+    }
   }catch(err){alert('Erro ao adicionar no carrinho: '+err.message);}
-  finally{window._balcaoMexendo--;if(!window._balcaoMexendo){await carregarBalcaoRemoto();desenharCarrinhoBalcao();}}
+  finally{window._balcaoMexendo--;if(!window._balcaoMexendo){await carregarBalcaoRemoto();desenharCarrinhoBalcao();atualizarBadgesEstoqueBalcao();}}
 }
 function qtyBalcao(idx,d){
   const item=balcaoItens[idx];if(!item)return;
@@ -1234,6 +1245,7 @@ function qtyBalcao(idx,d){
     const r=it.rows[it.rows.length-1];
     try{
       if(r.qty>1)await sb.from('balcao_itens').update({qty:r.qty-1}).eq('id',r.id);else await sb.from('balcao_itens').delete().eq('id',r.id);
+      if(r.estoque_baixado)await devolverEstoqueItem(it.prodId,1,'balcao (removido)');
       try{await registrarLog('BALCÃO - REMOVEU ITEM',`${it.nome} -1 (por: ${currentUser?currentUser.nome:'?'})`);}catch(e){}
     }catch(e){alert('Erro ao remover: '+e.message);}
     await carregarBalcaoRemoto();desenharCarrinhoBalcao();
@@ -1245,7 +1257,9 @@ function limparBalcao(){
     if(!confirm('Limpar todos os itens do carrinho?'))return;
     await carregarBalcaoRemoto();
     const ids=balcaoRows.map(r=>r.id);const resumo=balcaoItens.map(i=>`${i.qty}x ${i.nome}`).join(', ');
+    const rowsLimpar=balcaoRows.slice();
     if(ids.length){const{error}=await sb.from('balcao_itens').delete().in('id',ids);if(error){alert('Erro ao limpar: '+error.message);return;}}
+    for(const r of rowsLimpar){if(r.estoque_baixado)await devolverEstoqueItem(r.prod_id,r.qty,'balcao (limpou)');}
     try{await registrarLog('BALCÃO - LIMPOU CARRINHO',`${resumo} (por: ${currentUser?currentUser.nome:'?'})`);}catch(e){}
     await carregarBalcaoRemoto();desenharCarrinhoBalcao();
   });
@@ -1264,8 +1278,10 @@ async function finalizarBalcao(){
     // tira do carrinho compartilhado primeiro (evita outro aparelho finalizar de novo)
     await sb.from('balcao_itens').delete().in('id',rowsSnap.map(r=>r.id));
     await sb.from('venda_itens').insert(itens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
-    for(const i of itens){await descontarEstoqueItem(i.prodId,i.qty);}
+    // baixa só o que ainda não tinha sido baixado ao adicionar
+    for(const r of rowsSnap){if(!r.estoque_baixado)await descontarEstoqueItem(r.prod_id,r.qty,'balcao (finalizado)');}
     balcaoRows=[];balcaoItens=[];payAtual='dinheiro';
+    atualizarBadgesEstoqueBalcao();
     await verComprovante(venda.id);
   }catch(e){console.error(e);alert('Erro ao finalizar: '+e.message+'. Tente novamente.');}
   finally{window._finalizandoBalcao=false;}
@@ -1406,7 +1422,7 @@ async function processarFilaFesta(){
         window._festaItensCache=window._festaItensCache||[];window._festaItensCache.push(item);
         lastFestaEvent={type:'venda',id:item.id,produto_id:v.prodId,qty:1};
         festaFila.shift();
-        try{await descontarEstoqueItem(v.prodId,1);}catch(e){console.error('Estoque não descontado para',v.nome,e);}
+        await descontarEstoqueItem(v.prodId,1,'festa');
       }catch(e){
         console.error(e);
         // desfaz o +1 visual das vendas que não foram salvas
@@ -1728,37 +1744,40 @@ async function sincronizarEstoqueCopao(){
 }
 
 // Chamado pelas rotinas de venda no lugar do desconto normal, quando o item vendido é o Copão
+async function ajustarCopaoAtomico(dBally,dGin,dGelo){
+  const{error}=await sb.rpc('ajustar_copao',{p_bally:dBally,p_gin:dGin,p_gelo:dGelo});
+  if(!error)return true;
+  if(!/ajustar_copao|PGRST202|Could not find/i.test((error.code||'')+' '+(error.message||'')))throw error;
+  const ce=await getCopaoEstoqueRow();
+  const{error:e2}=await sb.from('copao_estoque').update({bally_ml:Math.max(0,(ce.bally_ml||0)+dBally),gin_ml:Math.max(0,(ce.gin_ml||0)+dGin),gelo_un:Math.max(0,(ce.gelo_un||0)+dGelo),atualizado_em:new Date().toISOString()}).eq('id',1);
+  if(e2)throw e2;return true;
+}
 async function consumirComponentesCopao(qty){
   try{
     const copaoProd=await getCopaoProduto();
-    const ce=await getCopaoEstoqueRow();
     const ginPorUn=copaoGinPorUnidade(copaoProd);
-    const novoBally=Math.max(0,(ce.bally_ml||0)-COPAO_CONSUMO_BALLY*qty);
-    const novoGin=Math.max(0,(ce.gin_ml||0)-ginPorUn*qty);
-    const novoGelo=Math.max(0,(ce.gelo_un||0)-COPAO_CONSUMO_GELO*qty);
-    await sb.from('copao_estoque').update({bally_ml:novoBally,gin_ml:novoGin,gelo_un:novoGelo,atualizado_em:new Date().toISOString()}).eq('id',1);
+    await ajustarCopaoAtomico(-COPAO_CONSUMO_BALLY*qty,-ginPorUn*qty,-COPAO_CONSUMO_GELO*qty);
     await sincronizarEstoqueCopao();
-  }catch(e){console.error('Erro ao consumir componentes do Copão:',e);}
+  }catch(e){avisarFalhaEstoque('Copão',e);}
 }
-// Chamado quando uma venda de Copão é desfeita/cancelada (devolve aos componentes)
 async function devolverComponentesCopao(qty){
   try{
     const copaoProd=await getCopaoProduto();
-    const ce=await getCopaoEstoqueRow();
     const ginPorUn=copaoGinPorUnidade(copaoProd);
-    const novoBally=(ce.bally_ml||0)+COPAO_CONSUMO_BALLY*qty;
-    const novoGin=(ce.gin_ml||0)+ginPorUn*qty;
-    const novoGelo=(ce.gelo_un||0)+COPAO_CONSUMO_GELO*qty;
-    await sb.from('copao_estoque').update({bally_ml:novoBally,gin_ml:novoGin,gelo_un:novoGelo,atualizado_em:new Date().toISOString()}).eq('id',1);
+    await ajustarCopaoAtomico(COPAO_CONSUMO_BALLY*qty,ginPorUn*qty,COPAO_CONSUMO_GELO*qty);
     await sincronizarEstoqueCopao();
-  }catch(e){console.error('Erro ao devolver componentes do Copão:',e);}
+  }catch(e){avisarFalhaEstoque('Copão',e);}
 }
 
 // Ajuste ATÔMICO de estoque: soma/subtrai direto no banco (evita uma operação apagar a outra quando acontecem ao mesmo tempo)
-async function ajustarEstoque(prodId,delta){
-  const{data,error}=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta});
-  if(!error)return data;
-  if(!/ajustar_estoque|PGRST202|function/i.test(error.message||'')||error.code==='42501')throw error;
+async function ajustarEstoque(prodId,delta,origem){
+  let r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta,p_origem:origem||null});
+  if(r.error&&/PGRST202|Could not find/i.test((r.error.code||'')+' '+(r.error.message||''))){
+    r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta}); // função antiga (sem origem)
+  }
+  if(!r.error)return r.data;
+  const error=r.error;
+  if(!/ajustar_estoque|PGRST202|Could not find/i.test((error.code||'')+' '+(error.message||'')))throw error;
   // fallback (função ainda não criada no Supabase): método antigo
   const{data:p,error:e1}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
   if(e1)throw e1;
@@ -1767,23 +1786,31 @@ async function ajustarEstoque(prodId,delta){
   if(e2)throw e2;
   return novo;
 }
+let _ultimoAvisoEstoque=0;
+function avisarFalhaEstoque(nome,e){
+  console.error('FALHA ESTOQUE',nome,e);
+  if(Date.now()-_ultimoAvisoEstoque<30000)return;_ultimoAvisoEstoque=Date.now();
+  alert('⚠️ O ESTOQUE de '+(nome||'um produto')+' NÃO foi atualizado.\n'+(e&&e.message?e.message:e)+'\n\nA venda foi registrada. Me avise (Jarvis) se isso aparecer.');
+}
 // Helpers genéricos usados por TODAS as rotinas de venda (mesa, balcão, festa):
 // decidem sozinhos se o produto é o Copão (desconta dos componentes) ou um produto comum (desconta do próprio estoque)
-async function descontarEstoqueItem(prodId,qty){
+async function descontarEstoqueItem(prodId,qty,origem){
+  let nome='';
   try{
-    const{data:p}=await sb.from('produtos').select('*').eq('id',prodId).single();
-    if(!p)return;
+    const{data:p,error}=await sb.from('produtos').select('*').eq('id',prodId).single();
+    if(error)throw error;if(!p)return;nome=p.nome;
     if(isCopao(p.nome)){await consumirComponentesCopao(qty);return;}
-    await ajustarEstoque(prodId,-qty);
-  }catch(e){console.error('Erro ao descontar estoque:',e);}
+    await ajustarEstoque(prodId,-qty,origem);
+  }catch(e){avisarFalhaEstoque(nome,e);}
 }
-async function devolverEstoqueItem(prodId,qty){
+async function devolverEstoqueItem(prodId,qty,origem){
+  let nome='';
   try{
-    const{data:p}=await sb.from('produtos').select('*').eq('id',prodId).single();
-    if(!p)return;
+    const{data:p,error}=await sb.from('produtos').select('*').eq('id',prodId).single();
+    if(error)throw error;if(!p)return;nome=p.nome;
     if(isCopao(p.nome)){await devolverComponentesCopao(qty);return;}
-    await ajustarEstoque(prodId,qty);
-  }catch(e){console.error('Erro ao devolver estoque:',e);}
+    await ajustarEstoque(prodId,qty,origem);
+  }catch(e){avisarFalhaEstoque(nome,e);}
 }
 
 async function renderCopao(){
