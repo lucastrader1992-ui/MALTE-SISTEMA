@@ -2631,7 +2631,7 @@ async function carregarCMV(){
   const corCmv=v=>v<=40?'var(--green)':v<=55?'var(--gold2)':'var(--red)';
   const corMg=v=>v>=50?'badge-green':v>=30?'badge-gold':'badge-red';
   const periodo=ini===fim?fmtDateOnly(ini+'T12:00:00'):`${fmtDateOnly(ini+'T12:00:00')} a ${fmtDateOnly(fim+'T12:00:00')}`;
-  window._cmvCache={ini,fim,periodo,faturamento,custoVendas,lucroBruto,cmvPct,margem,custoPerdas,custoConsumo,custoReal,cmvReal,ticket,nVendas:V.length,nDias,prods,cats,dias,porDia,baixaMargem,semCusto:Object.keys(semCusto),naoIdent};
+  window._cmvCache={produtosAtuais:P,ini,fim,periodo,faturamento,custoVendas,lucroBruto,cmvPct,margem,custoPerdas,custoConsumo,custoReal,cmvReal,ticket,nVendas:V.length,nDias,prods,cats,dias,porDia,baixaMargem,semCusto:Object.keys(semCusto),naoIdent};
   const maxDia=Math.max(1,...dias.map(d=>porDia[d].fat));
   const alertas=[];
   if(Object.keys(semCusto).length)alertas.push(`⚠️ <b>${Object.keys(semCusto).length} produto(s) vendidos sem custo cadastrado</b> — o CMV fica menor do que é de verdade: ${Object.keys(semCusto).map(escFunc).join(', ')}. Cadastre o custo na aba Produtos.`);
@@ -2672,8 +2672,124 @@ async function carregarCMV(){
   <div class="section-hdr"><div><div class="section-title">📦 Por produto</div><div class="section-sub">Toque no título da coluna pra ordenar</div></div></div>
   <div class="table-wrap"><table><thead><tr><th>Produto</th>${th('qty','Qtd')}${th('fat','Faturamento')}<th>Custo un.</th>${th('custo','Custo total')}${th('lucro','Lucro')}${th('margem','Margem')}<th>% do lucro</th></tr></thead>
     <tbody>${prods.length?prods.map(p=>`<tr><td>${p.emoji} <b>${escFunc(p.nome)}</b>${!p.custoU?' <span class="badge badge-red" title="Sem custo cadastrado">sem custo</span>':''}</td><td>${p.qty}</td><td style="color:var(--gold2)">${fmt(p.fat)}</td><td style="color:var(--text2)">${fmt(p.custoU)}</td><td style="color:var(--red)">${fmt(p.custo)}</td><td style="color:var(--green);font-weight:700">${fmt(p.lucro)}</td><td><span class="badge ${corMg(p.margem)}">${p.margem.toFixed(0)}%</span></td><td style="min-width:90px"><div class="cmv-bar" style="margin-top:0"><div class="cmv-fill" style="width:${Math.max(0,Math.min(100,p.lucro/lucroTotalProds*100))}%;background:var(--gold)"></div></div><span style="font-size:10px;color:var(--text3)">${(p.lucro/lucroTotalProds*100).toFixed(1)}%</span></td></tr>`).join(''):'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">Sem vendas no período</td></tr>'}</tbody></table></div>
-  <div style="font-size:11px;color:var(--text3);margin-top:8px">O custo usado é o <b>custo atual</b> cadastrado em cada produto. Se o custo mudou no meio do período, o cálculo usa o valor de hoje.</div>`;
+  <div style="font-size:11px;color:var(--text3);margin-top:8px">O custo usado é o <b>custo atual</b> cadastrado em cada produto. Se o custo mudou no meio do período, o cálculo usa o valor de hoje.</div>
+  <div id="cmv-estrat"></div>`;
+  renderEstrategiasCMV();
 }
+// ══════════════════════════════════════════════
+// 🎯 ESTRATÉGIAS DE CMV / MARGEM (inclusive com promoção)
+// ══════════════════════════════════════════════
+function metaCMV(){try{const v=parseFloat(localStorage.getItem('malte_meta_cmv'));if(v>0&&v<100)return v;}catch(e){}return 55;}
+function margemMinPromo(){try{const v=parseFloat(localStorage.getItem('malte_margem_promo'));if(v>=0&&v<100)return v;}catch(e){}return 20;}
+function salvarMargemPromo(v){v=parseFloat(v);if(!(v>=0&&v<100))return;try{localStorage.setItem('malte_margem_promo',String(v));}catch(e){}renderEstrategiasCMV();}
+function salvarMetaCMV(v){v=parseFloat(v);if(!(v>0&&v<100))return;try{localStorage.setItem('malte_meta_cmv',String(v));}catch(e){}renderEstrategiasCMV();}
+const arred50=v=>Math.ceil(v*2)/2; // arredonda pra cima de 0,50 em 0,50
+function renderEstrategiasCMV(){
+  const el=document.getElementById('cmv-estrat'),c=window._cmvCache;if(!el||!c)return;
+  const meta=metaCMV(),margemMin=margemMinPromo();
+  const P=(c.produtosAtuais||[]).filter(p=>Number(p.custo)>0&&Number(p.preco)>0);
+  const vendidos={};(c.prods||[]).forEach(p=>{vendidos[p.nome]=p;});
+  const card=(t,cor,corpo)=>`<div style="background:var(--bg3);border:1px solid var(--border2);border-left:3px solid ${cor};border-radius:var(--radius-sm);padding:12px;margin-bottom:10px"><div style="font-size:13px;font-weight:700;margin-bottom:6px">${t}</div><div style="font-size:12px;color:var(--text2);line-height:1.6">${corpo}</div></div>`;
+  const blocos=[];
+
+  // 1) Produtos acima da meta de CMV → preço sugerido
+  const caros=P.map(p=>({p,cmv:Number(p.custo)/Number(p.preco)*100,sug:arred50(Number(p.custo)/(meta/100)),q:(vendidos[p.nome]||{}).qty||0})).filter(x=>x.cmv>meta).sort((a,b)=>b.q-a.q||b.cmv-a.cmv);
+  if(caros.length)blocos.push(card(`💲 Ajuste de preço — ${caros.length} produto(s) com CMV acima da meta de ${meta}%`,'var(--red)',
+    `Pra bater a meta, o preço precisa ser pelo menos custo ÷ ${(meta/100).toFixed(2)}. Os mais vendidos primeiro:<div class="table-wrap" style="margin:8px 0 0"><table><thead><tr><th>Produto</th><th>Custo</th><th>Preço hoje</th><th>CMV hoje</th><th>Preço sugerido</th><th>+ lucro no período*</th></tr></thead><tbody>${caros.slice(0,10).map(x=>`<tr><td>${x.p.emoji||''} ${escFunc(x.p.nome)}</td><td>${fmt(x.p.custo)}</td><td>${fmt(x.p.preco)}</td><td style="color:var(--red)">${x.cmv.toFixed(0)}%</td><td style="color:var(--green);font-weight:700">${fmt(x.sug)}</td><td>${x.q?fmt((x.sug-Number(x.p.preco))*x.q):'—'}</td></tr>`).join('')}</tbody></table></div><div style="font-size:10px;color:var(--text3);margin-top:4px">*se tivesse vendido a mesma quantidade no preço sugerido. Se o produto é "isca" (puxa cliente), pode manter e compensar no combo.</div>`));
+  else if(P.length)blocos.push(card(`✅ Todos os produtos com custo cadastrado estão dentro da meta de CMV de ${meta}% no preço cheio`,'var(--green)','O risco agora está nas promoções e no mix — veja abaixo.'));
+
+  // 2) Promoções ativas — estão comendo a margem?
+  const promos=P.filter(p=>p.em_promo&&Number(p.preco_promo)>0).map(p=>{const cu=Number(p.custo),pc=Number(p.preco),pp=Number(p.preco_promo);const lN=pc-cu,lP=pp-cu;return{p,cu,pc,pp,lN,lP,mg:lP/pp*100,fator:lP>0?lN/lP:Infinity,min:arred50(cu/(1-margemMin/100))};});
+  if(promos.length)blocos.push(card(`🔥 Promoções ativas (${promos.length}) — quanto custam de verdade`,'var(--gold)',
+    `<div class="table-wrap" style="margin:4px 0 0"><table><thead><tr><th>Produto</th><th>Custo</th><th>Normal</th><th>Promo</th><th>Lucro/un normal → promo</th><th>Margem promo</th><th>Precisa vender</th><th>Promo mínima (margem ${margemMin}%)</th></tr></thead><tbody>${promos.map(x=>`<tr><td>${x.p.emoji||''} ${escFunc(x.p.nome)}</td><td>${fmt(x.cu)}</td><td>${fmt(x.pc)}</td><td style="color:var(--red);font-weight:700">${fmt(x.pp)}</td><td>${fmt(x.lN)} → <b style="color:${x.lP>0?'var(--gold2)':'var(--red)'}">${fmt(x.lP)}</b></td><td><span class="badge ${x.mg>=margemMin?'badge-green':x.mg>=margemMin/2?'badge-gold':'badge-red'}">${x.mg.toFixed(0)}%</span></td><td>${x.lP<=0?'<b style="color:var(--red)">PREJUÍZO</b>':`<b>${x.fator.toFixed(1)}x</b> mais`}</td><td style="color:var(--green)">${fmt(x.min)}</td></tr>`).join('')}</tbody></table></div>
+    <div style="margin-top:6px">"Precisa vender" = quantas vezes mais unidades a promoção tem que vender pra dar o mesmo lucro do preço normal. Se ela não multiplica o volume nisso, está tirando dinheiro do teu bolso.</div>`));
+
+  // 3) Regras de promoção que protegem a margem
+  blocos.push(card('🛡️ Como fazer promoção sem perder margem','var(--teal)',
+    `<b>1. Promoção em combo, não em produto solto.</b> Junte o produto em promoção com um de margem alta (petisco, gelo, copão, drink). O cliente sente o desconto, mas o lucro do combo segura a margem.<br>
+     <b>2. Desconto por quantidade.</b> "Leve 3, pague menos" em vez de baixar o preço de 1. Tu dá desconto só pra quem compra mais, e o ticket médio sobe.<br>
+     <b>3. Promoção com hora marcada.</b> Happy hour nos horários fracos, não na hora que já ia vender cheio. Assim tu não dá desconto pra quem já ia pagar o preço normal.<br>
+     <b>4. Trave o preço mínimo.</b> Nunca coloque promoção abaixo da coluna "Promo mínima". Ela garante pelo menos ${margemMin}% de margem.<br>
+     <b>5. Negocie com o fornecedor antes da promoção.</b> Promoção boa começa no custo: compra em volume, bonificação ou verba de marca (cervejaria costuma bancar ação). Cada R$ 0,50 a menos no custo vira margem direto.<br>
+     <b>6. Meça antes e depois.</b> Use o filtro de período desta aba: compare a semana da promoção com a semana anterior. Se o lucro bruto não subiu, a promoção não funcionou.`));
+
+  // 4) Combos sugeridos com os produtos reais
+  const iscas=P.map(p=>({p,mg:(Number(p.preco)-Number(p.custo))/Number(p.preco)*100,q:(vendidos[p.nome]||{}).qty||0})).filter(x=>x.q>0).sort((a,b)=>b.q-a.q);
+  const altas=P.map(p=>({p,mg:(Number(p.preco)-Number(p.custo))/Number(p.preco)*100,l:Number(p.preco)-Number(p.custo)})).filter(x=>x.mg>=55).sort((a,b)=>b.l-a.l);
+  const combos=[];
+  iscas.filter(x=>x.mg<margemMin+10).slice(0,3).forEach(i=>{const par=altas.find(a=>a.p.id!==i.p.id);if(!par)return;
+    const custo=Number(i.p.custo)+Number(par.p.custo),cheio=Number(i.p.preco)+Number(par.p.preco),preco=arred50(custo/(meta/100));
+    if(preco<=custo||preco>cheio-0.5)return;combos.push({a:i.p,b:par.p,custo,cheio,preco,mg:(preco-custo)/preco*100});});
+  if(combos.length)blocos.push(card('🧩 Combos sugeridos (produto que mais sai + produto de margem alta)','var(--purple)',
+    `<div class="table-wrap" style="margin:4px 0 0"><table><thead><tr><th>Combo</th><th>Separado</th><th>Preço do combo</th><th>Cliente economiza</th><th>Margem do combo</th></tr></thead><tbody>${combos.map(x=>`<tr><td>${x.a.emoji||''} ${escFunc(x.a.nome)} + ${x.b.emoji||''} ${escFunc(x.b.nome)}</td><td>${fmt(x.cheio)}</td><td style="color:var(--gold2);font-weight:700">${fmt(x.preco)}</td><td>${fmt(x.cheio-x.preco)}</td><td><span class="badge badge-green">${x.mg.toFixed(0)}%</span></td></tr>`).join('')}</tbody></table></div><div style="margin-top:6px">O preço do combo já respeita tua meta de CMV de ${meta}%.</div>`));
+
+  // 5) Matriz de cardápio (popularidade × margem)
+  const vend=(c.prods||[]).filter(p=>p.custoU>0&&p.qty>0);
+  if(vend.length>=3){
+    const mQ=vend.reduce((s,p)=>s+p.qty,0)/vend.length,mL=vend.reduce((s,p)=>s+p.lucro/p.qty,0)/vend.length;
+    const grupo={estrela:[],cavalo:[],enigma:[],cao:[]};
+    vend.forEach(p=>{const pop=p.qty>=mQ,luc=p.lucro/p.qty>=mL;grupo[pop&&luc?'estrela':pop?'cavalo':luc?'enigma':'cao'].push(p);});
+    const lista=a=>a.length?a.slice(0,6).map(p=>escFunc(p.nome)).join(', '):'<span style="color:var(--text3)">nenhum</span>';
+    blocos.push(card('🗺️ Mapa dos produtos (vende muito? dá lucro?)','var(--blue)',
+      `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">
+      <div>⭐ <b>Estrelas</b> — vendem muito e dão lucro: ${lista(grupo.estrela)}<br><i>Nunca deixe faltar. Não precisa de promoção.</i></div>
+      <div>🐎 <b>Burros de carga</b> — vendem muito, lucro baixo: ${lista(grupo.cavalo)}<br><i>Suba o preço aos poucos (R$ 0,50) ou venda em combo. Evite promoção neles.</i></div>
+      <div>❓ <b>Enigmas</b> — dão lucro mas vendem pouco: ${lista(grupo.enigma)}<br><i>São os melhores pra promoção e pra combo. Deixe à vista e mande o caixa oferecer.</i></div>
+      <div>🐕 <b>Cães</b> — vendem pouco e lucro baixo: ${lista(grupo.cao)}<br><i>Repense: troque o fornecedor, suba o preço ou tire do estoque.</i></div></div>`));
+  }
+
+  // 6) Perdas e consumo
+  if(c.custoPerdas+c.custoConsumo>0)blocos.push(card('🗑️ Vazamentos que pesam no CMV real','var(--red)',
+    `Perdas custaram <b>${fmt(c.custoPerdas)}</b> e o consumo dos funcionários <b>${fmt(c.custoConsumo)}</b> (a custo) no período. Isso leva o CMV de <b>${c.cmvPct.toFixed(1)}%</b> para <b>${c.cmvReal.toFixed(1)}%</b>.<br>
+     • Registre o motivo das perdas e veja qual produto mais quebra/vence.<br>• Gire o estoque pelo vencimento (primeiro que vence, primeiro que sai).<br>• Combine um limite de consumo por funcionário ou desconto fixo na diária.`));
+
+  if(!P.length)blocos.unshift(card('⚠️ Cadastre o custo dos produtos','var(--red)','Sem custo cadastrado não dá pra calcular margem nem sugerir preço. Vá em Produtos e preencha o custo de cada item.'));
+
+  el.innerHTML=`
+  <div class="section-hdr" style="margin-top:18px"><div><div class="section-title">🎯 Estratégias pra melhorar o CMV e a margem</div><div class="section-sub">Calculado com os teus produtos e as vendas do período acima</div></div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)">Meta de CMV <input type="number" value="${meta}" min="10" max="90" step="1" onchange="salvarMetaCMV(this.value)" style="width:60px;padding:6px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;text-align:center">% · Margem mínima na promo <input type="number" value="${margemMin}" min="0" max="90" step="1" onchange="salvarMargemPromo(this.value)" style="width:60px;padding:6px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;text-align:center">%</div></div>
+  <div style="font-size:11px;color:var(--text3);margin:-6px 0 10px">Referência: distribuidora/bar de bebidas costuma trabalhar com CMV entre 50% e 65%. Ajuste a meta pro teu negócio, fica salvo neste aparelho.</div>
+  ${simuladorPromoHtml(P)}
+  ${blocos.join('')}`;
+  calcSimPromo();
+}
+function simuladorPromoHtml(P){
+  if(!P.length)return'';
+  const inp='padding:8px;background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;';
+  return`<div style="background:var(--card);border:1px solid rgba(212,160,23,0.45);border-radius:var(--radius);padding:14px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:700;margin-bottom:10px">🧪 Simulador de promoção — teste antes de colocar no ar</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+      <div style="flex:1;min-width:170px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Produto</div><select id="sim-prod" onchange="calcSimPromo(true)" style="${inp}width:100%">${P.map(p=>`<option value="${p.id}">${p.emoji||''} ${escFunc(p.nome)}</option>`).join('')}</select></div>
+      <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Preço da promo (R$)</div><input type="number" id="sim-preco" step="0.5" oninput="calcSimPromo()" style="${inp}width:110px"></div>
+      <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Leve (combo qtd)</div><input type="number" id="sim-qtd" value="1" min="1" step="1" oninput="calcSimPromo()" style="${inp}width:80px"></div>
+    </div>
+    <div id="sim-res" style="margin-top:10px;font-size:12px;line-height:1.7"></div></div>`;
+}
+function calcSimPromo(trocouProduto){
+  const c=window._cmvCache,sel=document.getElementById('sim-prod');if(!c||!sel)return;
+  const p=(c.produtosAtuais||[]).find(x=>String(x.id)===sel.value);if(!p)return;
+  const inPreco=document.getElementById('sim-preco'),qtd=Math.max(1,parseInt(document.getElementById('sim-qtd').value)||1);
+  const cu=Number(p.custo),pc=Number(p.preco);
+  if(trocouProduto||!inPreco.value)inPreco.value=(p.em_promo&&Number(p.preco_promo)>0?Number(p.preco_promo):pc*qtd*0.9).toFixed(2);
+  const pp=parseFloat(inPreco.value)||0,custoT=cu*qtd,cheio=pc*qtd;
+  const lN=cheio-custoT,lP=pp-custoT,mg=pp>0?lP/pp*100:0,desc=cheio>0?(1-pp/cheio)*100:0,cmv=pp>0?custoT/pp*100:0,meta=metaCMV();
+  const margemMin=margemMinPromo(),minMeta=arred50(custoT/(meta/100)),minMg25=arred50(custoT/(1-margemMin/100));
+  const vend=(c.prods||[]).find(x=>x.nome===p.nome);const q=vend?vend.qty:0;
+  const fator=lP>0?lN/lP:Infinity;
+  const veredito=lP<=0?['❌','var(--red)','Prejuízo: o preço da promoção não cobre o custo.']:cmv<=meta?['✅','var(--green)',`Promoção saudável: CMV ${cmv.toFixed(0)}% dentro da tua meta de ${meta}%.`]:mg>=margemMin?['⚠️','var(--gold2)',`Aceitável só se aumentar bem o volume: precisa vender ${fator.toFixed(1)}x mais pra empatar o lucro.`]:['🚫','var(--red)',`Margem muito baixa (${mg.toFixed(0)}%). Só vale como isca, junto com produto de margem alta.`];
+  document.getElementById('sim-res').innerHTML=`
+    <div style="font-size:14px;font-weight:700;color:${veredito[1]};margin-bottom:6px">${veredito[0]} ${veredito[2]}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px">
+      <div>Preço cheio (${qtd}un)<br><b style="font-size:14px">${fmt(cheio)}</b></div>
+      <div>Desconto pro cliente<br><b style="font-size:14px">${desc.toFixed(0)}%</b></div>
+      <div>Custo<br><b style="font-size:14px;color:var(--red)">${fmt(custoT)}</b></div>
+      <div>Lucro normal → promo<br><b style="font-size:14px">${fmt(lN)} → <span style="color:${lP>0?'var(--gold2)':'var(--red)'}">${fmt(lP)}</span></b></div>
+      <div>Margem na promo<br><b style="font-size:14px">${mg.toFixed(0)}%</b></div>
+      <div>CMV na promo<br><b style="font-size:14px">${cmv.toFixed(0)}%</b></div>
+    </div>
+    <div style="margin-top:8px;color:var(--text2)">🔒 Preço mínimo pra manter a meta de ${meta}%: <b style="color:var(--green)">${fmt(minMeta)}</b> · promo mínima (margem ${margemMin}%): <b>${fmt(minMg25)}</b>${q?`<br>📦 No período vendeu <b>${q}</b> un. Nessa promo, pra dar o mesmo lucro, teria que vender <b>${isFinite(fator)?Math.ceil(q*fator/qtd)+' promoções ('+Math.ceil(q*fator)+' un)':'— (dá prejuízo)'}</b>.`:''}</div>`;
+}
+
 function gerarPDFCMV(){
   const c=window._cmvCache;if(!c){alert('Calcule o CMV primeiro.');return;}
   const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
