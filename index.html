@@ -2892,7 +2892,7 @@ async function renderFuncDetalhe(n){
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
     <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
     <button class="btn btn-secondary" onclick="novoValeFunc('${nj}')">💵 + Vale</button>
-    <button class="btn btn-green" onclick="novoDiaFunc('${nj}')">📅 + Dia trabalhado</button>
+    ${currentUser&&currentUser.id==='adm'?`<button class="btn btn-green" onclick="novoDiaFunc('${nj}')">📅 + Dia trabalhado</button>`:''}
   </div>
   <div class="stats-grid">
     <div class="stat-card stat-green"><div class="stat-label">Diárias (${r.nDias} normal + ${r.nFestas} festa)</div><div class="stat-value">${fmt(r.ganhos)}</div></div>
@@ -2973,6 +2973,7 @@ async function salvarValeFunc(n){
   finally{window._funcLock=false;if(btn){btn.disabled=false;btn.textContent='Salvar';}}
 }
 function novoDiaFunc(n){
+  if(!currentUser||currentUser.id!=='adm'){alert('Lançar dia trabalhado é só no login do ADM.');return;}
   window._funcTipoDia='dia';
   openModal(`<h3>📅 Dia trabalhado — ${escFunc(n)}</h3>
   <div class="modal-field"><label>Tipo</label><div style="display:flex;gap:8px">
