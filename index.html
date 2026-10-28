@@ -2595,8 +2595,8 @@ async function renderFuncDetalhe(n){
     <button class="btn btn-secondary btn-sm" onclick="gerarPDFFunc()">🖨 PDF</button></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
     <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
-    <button class="btn btn-secondary" onclick="pedirSenhaAdm('Lançar vale requer senha ADM',()=>novoValeFunc('${nj}'))">💵 + Vale</button>
-    <button class="btn btn-green" onclick="pedirSenhaAdm('Lançar dia trabalhado requer senha ADM',()=>novoDiaFunc('${nj}'))">📅 + Dia trabalhado</button>
+    <button class="btn btn-secondary" onclick="novoValeFunc('${nj}')">💵 + Vale</button>
+    <button class="btn btn-green" onclick="novoDiaFunc('${nj}')">📅 + Dia trabalhado</button>
   </div>
   <div class="stats-grid">
     <div class="stat-card stat-green"><div class="stat-label">Diárias (${r.nDias} normal + ${r.nFestas} festa)</div><div class="stat-value">${fmt(r.ganhos)}</div></div>
@@ -2615,7 +2615,7 @@ async function renderFuncDetalhe(n){
     <td>${escFunc(l.descricao)}</td>
     <td style="text-align:right;font-weight:700;color:${pos?'var(--green)':'var(--red)'}">${pos?'+':'-'}${fmt(l.valor)}</td>
     <td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
-    <td>${l.fechado?'':`<button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button>`}</td>
+    <td>${l.fechado?'':`<div style="display:flex;gap:3px"><button class="btn btn-secondary btn-xs" title="Editar" onclick="pedirSenhaAdm('Editar lançamento requer senha ADM',()=>editarLancFunc(${l.id}))">✏</button><button class="btn btn-danger btn-xs" title="Excluir" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button></div>`}</td>
   </tr>`;}).join('')}</tbody></table></div>`;
 }
 async function novoConsumoFunc(n){
@@ -2700,6 +2700,28 @@ async function salvarDiaFunc(n){
     closeModal();renderFuncDetalhe(n);
   }catch(e){alert('Erro: '+e.message);}
   finally{window._funcLock=false;if(btn){btn.disabled=false;btn.textContent='Salvar';}}
+}
+async function editarLancFunc(id){
+  try{
+    const{data:l,error}=await sb.from('func_lancamentos').select('*').eq('id',id).single();if(error)throw error;
+    const dia=l.tipo==='dia'||l.tipo==='festa';
+    openModal(`<h3>✏ Editar lançamento — ${escFunc(l.funcionario)}</h3>
+    ${dia?`<div class="modal-field"><label>Tipo</label><select id="fe-tipo"><option value="dia" ${l.tipo==='dia'?'selected':''}>📅 Normal — ${fmt(DIARIA_NORMAL)}</option><option value="festa" ${l.tipo==='festa'?'selected':''}>🎉 Festa — ${fmt(DIARIA_FESTA)}</option></select></div>`
+    :`<div class="modal-field"><label>Descrição</label><input type="text" id="fe-desc" value="${escFunc(l.descricao)}"></div>
+    <div class="modal-field"><label>Valor (R$)</label><input type="number" id="fe-valor" step="0.01" value="${Number(l.valor).toFixed(2)}"></div>`}
+    <div class="modal-field"><label>Data</label><input type="date" id="fe-data" value="${l.data}"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarEdicaoLancFunc(${id},${dia})">Salvar</button></div>`);
+  }catch(e){alert('Erro ao abrir: '+e.message);}
+}
+async function salvarEdicaoLancFunc(id,dia){
+  const upd={data:document.getElementById('fe-data').value};
+  if(dia){const t=document.getElementById('fe-tipo').value;upd.tipo=t;upd.descricao=t==='festa'?'Dia de festa':'Diária';upd.valor=t==='festa'?DIARIA_FESTA:DIARIA_NORMAL;}
+  else{upd.descricao=document.getElementById('fe-desc').value.trim();upd.valor=parseFloat(document.getElementById('fe-valor').value)||0;if(!upd.descricao||upd.valor<=0){alert('Preencha descrição e valor.');return;}}
+  try{
+    const{error}=await sb.from('func_lancamentos').update(upd).eq('id',id);if(error){alert('Erro ao salvar: '+error.message);return;}
+    registrarLog('Editou lançamento funcionário',`#${id} ${upd.descricao} ${fmt(upd.valor)}`);
+    closeModal();renderFuncDetalhe(funcSel);
+  }catch(e){alert('Erro: '+e.message);}
 }
 async function excluirLancFunc(id){
   try{
