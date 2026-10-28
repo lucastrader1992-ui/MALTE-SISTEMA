@@ -220,6 +220,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <!-- aba Tarefas oculta (dados mantidos no Supabase) -->
     <button class="nav-btn" onclick="goTab('funcionarios')">👷 Funcionários</button>
     <button class="nav-btn" onclick="goTab('anotacoes')">📝 Notas</button>
+    <button class="nav-btn adm-only" onclick="goTab('relatoriodia')">📋 Relatório Dia</button>
     <button class="nav-btn adm-only" onclick="goTab('relatorios')">📈 Relatórios</button>
     <button class="nav-btn adm-only" onclick="goTab('configuracoes')">⚙️ Config</button>
   </div>
@@ -469,7 +470,7 @@ function goTab(tab){
   const tabs={dashboard:renderDashboard,caixa:renderCaixa,mesas:renderMesas,balcao:renderBalcao,
     estoque:renderEstoque,bruno:renderBruno,produtos:renderProdutos,financeiro:renderFinanceiro,
     compras:renderCompras,cmv:renderCMV,comissoes:renderComissoes,tarefas:renderTarefas,
-    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao,funcionarios:()=>{funcSel=null;renderFuncionarios();}};
+    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao,funcionarios:()=>{funcSel=null;renderFuncionarios();},relatoriodia:renderRelatorioDia};
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
@@ -1022,8 +1023,14 @@ async function gerarPDFCaixaDiaEspecifico(dataStr){
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
 async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));try{await registrarLog('ABERTURA CAIXA',`Troco inicial: ${fmt(troco)}`);}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
-function fecharCaixa(){openModal(`<h3>🔒 Fechar Caixa</h3><p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" onclick="confirmarFecharCaixa()">Fechar Caixa</button></div>`);}
-async function confirmarFecharCaixa(){try{const abrPrevia=caixaAberto?caixaAberto.abertura:null;const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});if(error){alert('Erro ao fechar caixa: '+error.message);return;}caixaAberto=null;localStorage.removeItem('malte_caixa');try{await registrarLog('FECHAMENTO CAIXA',abrPrevia?`Aberto desde ${fmtDateFull(abrPrevia)}`:'Caixa fechado');}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
+function fecharCaixa(){openModal(`<h3>🔒 Fechar Caixa</h3>
+<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px">
+  <div style="font-size:13px;font-weight:700;margin-bottom:8px">🍔 Saída para comida</div>
+  <div class="modal-field"><label>Valor (R$) — deixe 0 se não teve</label><input type="number" id="fc-comida-valor" value="0" step="0.01" min="0"></div>
+  <div class="modal-field" style="margin-bottom:0"><label>Descrição (opcional)</label><input type="text" id="fc-comida-desc" placeholder="Ex: janta da equipe, lanche..."></div>
+</div>
+<p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" id="btn-fechar-caixa" onclick="confirmarFecharCaixa()">Fechar Caixa</button></div>`);}
+async function confirmarFecharCaixa(){if(window._fecharCaixaLock)return;const vC=document.getElementById('fc-comida-valor'),dC=document.getElementById('fc-comida-desc');const valorComida=vC?(parseFloat(vC.value)||0):0;const descComida=(dC&&dC.value.trim())||'Comida';if(valorComida<0){alert('Valor inválido.');return;}window._fecharCaixaLock=true;const bF=document.getElementById('btn-fechar-caixa');if(bF){bF.disabled=true;bF.textContent='Fechando...';}try{if(valorComida>0){const{error:eC}=await sb.from('saidas_caixa').insert({descricao:descComida,valor:valorComida,operador:currentUser.nome,categoria:'comida'});if(eC){alert('Erro ao lançar saída de comida: '+eC.message+'\n\nO caixa NÃO foi fechado.');return;}try{await registrarLog('SAÍDA COMIDA',`${descComida}: ${fmt(valorComida)}`);}catch(e){}}}finally{window._fecharCaixaLock=false;if(bF){bF.disabled=false;bF.textContent='Fechar Caixa';}}try{const abrPrevia=caixaAberto?caixaAberto.abertura:null;const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});if(error){alert('Erro ao fechar caixa: '+error.message);return;}caixaAberto=null;localStorage.removeItem('malte_caixa');try{await registrarLog('FECHAMENTO CAIXA',abrPrevia?`Aberto desde ${fmtDateFull(abrPrevia)}`:'Caixa fechado');}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
 async function verComprovante(vendaId){
   const[{data:v},{data:itens}]=await Promise.all([sb.from('vendas').select('*').eq('id',vendaId).single(),sb.from('venda_itens').select('*').eq('venda_id',vendaId)]);
   const I=itens||[];
@@ -2752,6 +2759,103 @@ function gerarPDFFunc(){
     <div class="stat"><div class="stat-label">${r.liquido<0?'Deve':'A receber'}</div><div class="stat-value">${fmt(Math.abs(r.liquido))}</div></div>`;
   const tab=c.abertos.length===0?'<p>Nenhum lançamento em aberto.</p>':`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...c.abertos].reverse().map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${rot[l.tipo]||l.tipo}</td><td>${escFunc(l.descricao)}</td><td>${l.tipo==='dia'||l.tipo==='festa'?'+':'-'}${fmt(l.valor)}</td></tr>`).join('')}</tbody></table>`;
   abrirJanelaImpressaoCaixa('Extrato do Funcionário',escFunc(c.nome),stats,`<h2>Lançamentos em aberto</h2>${tab}<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
+}
+
+// ══════════════════════════════════════════════
+// 📋 RELATÓRIO COMPLETO POR DIA / PERÍODO
+// ══════════════════════════════════════════════
+function intervaloComercial(ini,fim){const a=new Date(`${ini}T06:00:00`);const b=new Date(`${fim}T06:00:00`);b.setDate(b.getDate()+1);b.setHours(5,59,59,999);return{tsIni:a.toISOString(),tsFim:b.toISOString()};}
+async function renderRelatorioDia(){
+  const hoje=hojeLocalStr();
+  const inp='padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;';
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><div class="section-title">📋 Relatório Completo</div><div class="section-sub">Vendas, perdas, saídas de comida, vales e consumo dos funcionários</div></div>
+    <button class="btn btn-primary btn-sm" onclick="gerarPDFRelDia()">🖨 PDF</button></div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
+    <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Dia</div><input type="date" id="rd-ini" value="${hoje}" style="${inp}"></div>
+    <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Até (opcional)</div><input type="date" id="rd-fim" value="" style="${inp}"></div>
+    <button class="btn btn-primary" onclick="carregarRelDia()">🔍 Gerar</button>
+    <button class="btn btn-secondary" onclick="document.getElementById('rd-ini').value='${hoje}';document.getElementById('rd-fim').value='';carregarRelDia()">📌 Hoje</button>
+  </div>
+  <div id="rd-conteudo"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
+  carregarRelDia();
+}
+async function carregarRelDia(){
+  const ini=document.getElementById('rd-ini').value||hojeLocalStr();
+  let fim=document.getElementById('rd-fim').value||ini;
+  const el=document.getElementById('rd-conteudo');
+  if(fim<ini){el.innerHTML='<div class="empty"><p style="color:var(--red)">A data final não pode ser antes da inicial.</p></div>';return;}
+  el.innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  const{tsIni,tsFim}=intervaloComercial(ini,fim);
+  let vendas=[],saidas=[],perdas=[],func=[],itens=[],avisoFunc='';
+  try{
+    const[rV,rS,rP]=await Promise.all([
+      sb.from('vendas').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:true}),
+      sb.from('saidas_caixa').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:true}),
+      sb.from('perdas').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('criado_em',{ascending:true})
+    ]);
+    if(rV.error)throw rV.error;if(rS.error)throw rS.error;if(rP.error)throw rP.error;
+    vendas=rV.data||[];saidas=rS.data||[];perdas=rP.data||[];
+    try{const{data,error}=await sb.from('func_lancamentos').select('*').gte('data',ini).lte('data',fim).order('data',{ascending:true});if(error)throw error;func=data||[];}catch(e){avisoFunc='Não foi possível carregar funcionários: '+e.message;}
+    if(vendas.length){
+      const ids=vendas.map(v=>v.id);
+      for(let i=0;i<ids.length;i+=200){const{data,error}=await sb.from('venda_itens').select('*').in('venda_id',ids.slice(i,i+200));if(error)throw error;itens=itens.concat(data||[]);}
+    }
+  }catch(e){el.innerHTML=`<div class="empty"><p style="color:var(--red)">Erro ao carregar: ${escFunc(e.message)}</p></div>`;return;}
+  const totalVendas=vendas.reduce((s,v)=>s+Number(v.total),0);
+  const porPag={};vendas.forEach(v=>{const k=(v.pagamento||'outro').toLowerCase();porPag[k]=(porPag[k]||0)+Number(v.total);});
+  const porProd={};itens.forEach(i=>{if(!porProd[i.nome])porProd[i.nome]={qty:0,total:0};porProd[i.nome].qty+=Number(i.qty);porProd[i.nome].total+=Number(i.total);});
+  const prods=Object.entries(porProd).sort((a,b)=>b[1].total-a[1].total);
+  const saidasComida=saidas.filter(s=>(s.categoria||'')==='comida'),saidasOutras=saidas.filter(s=>(s.categoria||'')!=='comida');
+  const tComida=saidasComida.reduce((s,x)=>s+Number(x.valor),0),tOutras=saidasOutras.reduce((s,x)=>s+Number(x.valor),0);
+  const tPerdasQty=perdas.reduce((s,p)=>s+Number(p.qty),0),tPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total||0),0);
+  const vales=func.filter(l=>l.tipo==='vale'),consumos=func.filter(l=>l.tipo==='consumo'),dias=func.filter(l=>l.tipo==='dia'||l.tipo==='festa');
+  const tVales=vales.reduce((s,l)=>s+Number(l.valor),0),tCons=consumos.reduce((s,l)=>s+Number(l.valor),0),tDias=dias.reduce((s,l)=>s+Number(l.valor),0);
+  const saldo=totalVendas-tComida-tOutras;
+  const periodo=ini===fim?fmtDateOnly(ini+'T12:00:00'):`${fmtDateOnly(ini+'T12:00:00')} a ${fmtDateOnly(fim+'T12:00:00')}`;
+  window._relDiaCache={periodo,totalVendas,porPag,prods,vendas,itens,saidasComida,saidasOutras,tComida,tOutras,perdas,tPerdasQty,tPerdasCusto,vales,consumos,dias,tVales,tCons,tDias,saldo};
+  const hora=d=>fmtDateFull(d);
+  const vazio=t=>`<div style="font-size:12px;color:var(--text3);padding:8px 0">${t}</div>`;
+  const bloco=(titulo,cor,sub,corpo)=>`<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid ${cor};border-radius:var(--radius);padding:14px;margin-bottom:16px;"><div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px"><div style="font-size:14px;font-weight:700">${titulo}</div><div style="font-size:12px;color:var(--text2)">${sub}</div></div>${corpo}</div>`;
+  const tabela=(cab,linhas)=>`<div class="table-wrap" style="margin-bottom:0"><table><thead><tr>${cab.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${linhas}</tbody></table></div>`;
+  const porFunc=L=>{const m={};L.forEach(l=>{m[l.funcionario]=(m[l.funcionario]||0)+Number(l.valor);});return Object.entries(m).map(([n,v])=>`<span class="badge badge-blue" style="margin:0 4px 6px 0">${escFunc(n)}: ${fmt(v)}</span>`).join('');};
+  el.innerHTML=`
+  <div style="font-size:13px;color:var(--gold2);font-weight:700;margin-bottom:10px">📅 ${periodo}</div>
+  ${avisoFunc?`<div style="font-size:12px;color:var(--red);margin-bottom:10px">${escFunc(avisoFunc)}</div>`:''}
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Vendido</div><div class="stat-value">${fmt(totalVendas)}</div><div class="stat-sub">${vendas.length} vendas</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">🍔 Saídas comida</div><div class="stat-value">${fmt(tComida)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Outras saídas</div><div class="stat-value">${fmt(tOutras)}</div></div>
+    <div class="stat-card ${saldo>=0?'stat-green':'stat-red'}"><div class="stat-label">Saldo do caixa</div><div class="stat-value">${fmt(saldo)}</div><div class="stat-sub">vendas − saídas</div></div>
+    <div class="stat-card"><div class="stat-label">🗑 Perdas</div><div class="stat-value" style="color:var(--red)">${tPerdasQty} un</div><div class="stat-sub">custo ${fmt(tPerdasCusto)}</div></div>
+    <div class="stat-card"><div class="stat-label">💵 Vales</div><div class="stat-value" style="color:var(--orange)">${fmt(tVales)}</div></div>
+    <div class="stat-card"><div class="stat-label">🍺 Consumo func.</div><div class="stat-value" style="color:var(--red)">${fmt(tCons)}</div></div>
+    <div class="stat-card"><div class="stat-label">📅 Diárias</div><div class="stat-value" style="color:var(--green)">${fmt(tDias)}</div><div class="stat-sub">${dias.length} lançamento(s)</div></div>
+  </div>
+  ${bloco('💰 Vendas por pagamento','var(--gold)',fmt(totalVendas),Object.keys(porPag).length?Object.entries(porPag).map(([k,v])=>`<span class="badge badge-blue" style="margin:0 4px 6px 0;font-size:12px">${k.toUpperCase()}: ${fmt(v)}</span>`).join(''):vazio('Nenhuma venda.'))}
+  ${bloco('📦 Produtos vendidos','var(--gold)',`${prods.reduce((s,p)=>s+p[1].qty,0)} itens`,prods.length?tabela(['Produto','Qtd','Total'],prods.map(([n,d])=>`<tr><td>${escFunc(n)}</td><td>${d.qty}</td><td style="color:var(--gold2);font-weight:600">${fmt(d.total)}</td></tr>`).join('')):vazio('Nenhum produto vendido.'))}
+  ${bloco('🗑 Perdas','var(--red)',`${tPerdasQty} un · custo ${fmt(tPerdasCusto)}`,perdas.length?tabela(['Horário','Produto','Qtd','Motivo','Custo','Operador'],perdas.map(p=>`<tr><td style="font-size:11px">${hora(p.criado_em)}</td><td>${escFunc(p.produto)}</td><td style="color:var(--red)">-${p.qty}</td><td>${escFunc(p.motivo)}</td><td>${fmt(p.custo_total)}</td><td style="font-size:11px">${escFunc(p.operador)}</td></tr>`).join('')):vazio('Nenhuma perda.'))}
+  ${bloco('🍔 Saídas para comida','var(--red)',fmt(tComida),saidasComida.length?tabela(['Horário','Descrição','Valor','Operador'],saidasComida.map(s=>`<tr><td style="font-size:11px">${hora(s.criado_em)}</td><td>${escFunc(s.descricao||'Comida')}</td><td style="color:var(--red);font-weight:600">${fmt(s.valor)}</td><td style="font-size:11px">${escFunc(s.operador)}</td></tr>`).join('')):vazio('Nenhuma saída para comida.'))}
+  ${saidasOutras.length?bloco('↗ Outras saídas do caixa','var(--red)',fmt(tOutras),tabela(['Horário','Descrição','Valor','Operador'],saidasOutras.map(s=>`<tr><td style="font-size:11px">${hora(s.criado_em)}</td><td>${escFunc(s.descricao||s.motivo||'—')}</td><td style="color:var(--red);font-weight:600">${fmt(s.valor)}</td><td style="font-size:11px">${escFunc(s.operador)}</td></tr>`).join(''))):''}
+  ${bloco('💵 Vales dos funcionários','var(--orange)',fmt(tVales),vales.length?porFunc(vales)+tabela(['Data','Funcionário','Obs.','Valor'],vales.map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td style="font-weight:600">${escFunc(l.funcionario)}</td><td>${escFunc(l.descricao)}</td><td style="color:var(--orange);font-weight:600">${fmt(l.valor)}</td></tr>`).join('')):vazio('Nenhum vale.'))}
+  ${bloco('🍺 Consumo dos funcionários','var(--red)',fmt(tCons),consumos.length?porFunc(consumos)+tabela(['Data','Funcionário','Item','Valor'],consumos.map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td style="font-weight:600">${escFunc(l.funcionario)}</td><td>${escFunc(l.descricao)}</td><td style="color:var(--red);font-weight:600">${fmt(l.valor)}</td></tr>`).join('')):vazio('Nenhum consumo.'))}
+  ${bloco('📅 Dias trabalhados','var(--green)',fmt(tDias),dias.length?tabela(['Data','Funcionário','Tipo','Valor'],dias.map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td style="font-weight:600">${escFunc(l.funcionario)}</td><td>${l.tipo==='festa'?'🎉 Festa':'📅 Normal'}</td><td style="color:var(--green);font-weight:600">${fmt(l.valor)}</td></tr>`).join('')):vazio('Nenhum dia lançado.'))}`;
+}
+function gerarPDFRelDia(){
+  const c=window._relDiaCache;if(!c){alert('Gere o relatório primeiro.');return;}
+  const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
+  const stats=st('Vendido',fmt(c.totalVendas))+st('Saídas comida',fmt(c.tComida))+st('Outras saídas',fmt(c.tOutras))+st('Saldo do caixa',fmt(c.saldo))+st('Perdas',`${c.tPerdasQty} un (${fmt(c.tPerdasCusto)})`)+st('Vales',fmt(c.tVales))+st('Consumo funcionários',fmt(c.tCons))+st('Diárias',fmt(c.tDias))+st('Formas de pgto',Object.entries(c.porPag).map(([k,v])=>`${k.toUpperCase()} ${fmt(v)}`).join('<br>')||'—');
+  const t=(titulo,cab,linhas)=>`<h2>${titulo}</h2>${linhas.length?`<table><thead><tr>${cab.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${linhas.join('')}</tbody></table>`:'<p style="font-size:12px;color:#666">Nenhum registro.</p>'}`;
+  const d=x=>fmtDateOnly(x+'T12:00:00');
+  const sec=
+    t('Produtos vendidos',['Produto','Qtd','Total'],c.prods.map(([n,v])=>`<tr><td>${escFunc(n)}</td><td>${v.qty}</td><td>${fmt(v.total)}</td></tr>`))+
+    t('Perdas',['Horário','Produto','Qtd','Motivo','Custo','Operador'],c.perdas.map(p=>`<tr><td>${fmtDateFull(p.criado_em)}</td><td>${escFunc(p.produto)}</td><td>-${p.qty}</td><td>${escFunc(p.motivo)}</td><td>${fmt(p.custo_total)}</td><td>${escFunc(p.operador)}</td></tr>`))+
+    t('Saídas para comida',['Horário','Descrição','Valor','Operador'],c.saidasComida.map(s=>`<tr><td>${fmtDateFull(s.criado_em)}</td><td>${escFunc(s.descricao||'Comida')}</td><td>${fmt(s.valor)}</td><td>${escFunc(s.operador)}</td></tr>`))+
+    (c.saidasOutras.length?t('Outras saídas',['Horário','Descrição','Valor','Operador'],c.saidasOutras.map(s=>`<tr><td>${fmtDateFull(s.criado_em)}</td><td>${escFunc(s.descricao||s.motivo||'—')}</td><td>${fmt(s.valor)}</td><td>${escFunc(s.operador)}</td></tr>`)):'')+
+    t('Vales dos funcionários',['Data','Funcionário','Obs.','Valor'],c.vales.map(l=>`<tr><td>${d(l.data)}</td><td>${escFunc(l.funcionario)}</td><td>${escFunc(l.descricao)}</td><td>${fmt(l.valor)}</td></tr>`))+
+    t('Consumo dos funcionários',['Data','Funcionário','Item','Valor'],c.consumos.map(l=>`<tr><td>${d(l.data)}</td><td>${escFunc(l.funcionario)}</td><td>${escFunc(l.descricao)}</td><td>${fmt(l.valor)}</td></tr>`))+
+    t('Dias trabalhados',['Data','Funcionário','Tipo','Valor'],c.dias.map(l=>`<tr><td>${d(l.data)}</td><td>${escFunc(l.funcionario)}</td><td>${l.tipo==='festa'?'Festa':'Normal'}</td><td>${fmt(l.valor)}</td></tr>`));
+  abrirJanelaImpressaoCaixa('Relatório Completo',c.periodo,stats,sec);
 }
 
 async function renderAnotacoes(){
