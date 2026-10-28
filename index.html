@@ -1041,11 +1041,12 @@ function imprimirComprovante(id){const el=document.getElementById(id);const pa=d
 async function renderMesas(){
   const[{data:M},{data:I}]=await Promise.all([sb.from('mesas').select('*').order('id'),sb.from('mesa_itens').select('*')]);
   const totais={};(I||[]).forEach(i=>{totais[i.mesa_id]=(totais[i.mesa_id]||0)+Number(i.preco)*i.qty;});
+  mapearMesasFunc(M);
   const ocup=(M||[]).filter(m=>m.status==='ocupada').length;
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><div class="section-title">Mesas</div><div class="section-sub">${ocup} ocupadas de ${(M||[]).length}</div></div><span style="font-size:11px;color:var(--teal)">🔄 Auto atualização</span></div>
   <div class="mesas-grid" id="mesas-grid-container">
-    ${(M||[]).map(m=>`<div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})"><div class="mesa-num" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.id}</div><div class="mesa-status" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.status==='ocupada'?'Ocupada':'Livre'}</div>${m.status==='ocupada'&&totais[m.id]?`<div class="mesa-total">${fmt(totais[m.id])}</div>`:''}</div>`).join('')}
+    ${(M||[]).map(m=>cardMesaHtml(m,totais)).join('')}
   </div>`;
   stopMesaPolling();
   mesaPollingInterval=setInterval(async()=>{
@@ -1053,17 +1054,48 @@ async function renderMesas(){
     const[{data:Mu},{data:Iu}]=await Promise.all([sb.from('mesas').select('*').order('id'),sb.from('mesa_itens').select('*')]);
     const tot={};(Iu||[]).forEach(i=>{tot[i.mesa_id]=(tot[i.mesa_id]||0)+Number(i.preco)*i.qty;});
     const g=document.getElementById('mesas-grid-container');if(!g)return stopMesaPolling();
-    g.innerHTML=(Mu||[]).map(m=>`<div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})"><div class="mesa-num" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.id}</div><div class="mesa-status" style="color:${m.status==='ocupada'?'var(--red)':'var(--green)'}">${m.status==='ocupada'?'Ocupada':'Livre'}</div>${m.status==='ocupada'&&tot[m.id]?`<div class="mesa-total">${fmt(tot[m.id])}</div>`:''}</div>`).join('');
+    mapearMesasFunc(Mu);g.innerHTML=(Mu||[]).map(m=>cardMesaHtml(m,tot)).join('');
   },5000);
 }
-async function abrirMesa(id){const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(m.status==='livre'){openModal(`<h3>🍺 Mesa ${id}</h3><p style="color:var(--text2);font-size:13px;margin-bottom:18px">Abrir a mesa ${id}?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button></div>`);}else{await modalMesaAberta(id);}}
+// 👷 Mesas dos funcionários: as últimas mesas (por número) ficam com o nome de cada funcionário
+window._funcMesaMap={};
+function mapearMesasFunc(M){const ids=(M||[]).map(m=>m.id).sort((a,b)=>a-b);const ult=ids.slice(-FUNCIONARIOS.length);const mp={};ult.forEach((id,i)=>{mp[id]=FUNCIONARIOS[i];});window._funcMesaMap=mp;}
+async function garantirMapaMesasFunc(){if(Object.keys(window._funcMesaMap||{}).length)return;try{const{data}=await sb.from('mesas').select('id');mapearMesasFunc(data);}catch(e){}}
+function funcDaMesa(id){return (window._funcMesaMap||{})[id]||null;}
+function nomeMesa(id){const f=funcDaMesa(id);return f?'👷 '+f:'Mesa '+id;}
+function cardMesaHtml(m,tot){const f=funcDaMesa(m.id),oc=m.status==='ocupada',cor=oc?'var(--red)':'var(--green)';
+  return`<div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})" style="${f?'border-style:dashed;'+(oc?'':'border-color:rgba(176,110,212,0.5);'):''}">
+  ${f?`<div class="mesa-num" style="color:${oc?'var(--red)':'#b06ed4'};font-size:17px;line-height:1.2;padding:4px 0">👷 ${escFunc(f)}</div>`:`<div class="mesa-num" style="color:${cor}">${m.id}</div>`}
+  <div class="mesa-status" style="color:${cor}">${oc?'Ocupada':(f?'Funcionário':'Livre')}</div>${oc&&tot[m.id]?`<div class="mesa-total">${fmt(tot[m.id])}</div>`:''}</div>`;}
+async function lancarMesaNoFuncionario(id){
+  if(window._fechandoMesa)return;const nome=funcDaMesa(id);if(!nome)return;
+  window._fechandoMesa=true;
+  try{
+    const{data:itens,error:eI}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);if(eI)throw eI;const I=itens||[];
+    if(!I.length){closeModal();return;}
+    const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
+    if(!confirm(`Lançar ${fmt(total)} no consumo de ${nome}?`))return;
+    const data=hojeLocalStr(getDiaComercial().inicio);
+    // O estoque já foi descontado quando os itens entraram na comanda — aqui não desconta de novo.
+    const linhas=I.map(i=>({funcionario:nome,tipo:'consumo',descricao:`${i.qty}x ${String(i.nome||'').replace(/^\S+\s/,'')}`,qty:i.qty,valor:Number(i.preco)*i.qty,prod_id:i.prod_id,data,operador:currentUser.nome,fechado:false}));
+    const{error}=await sb.from('func_lancamentos').insert(linhas);
+    if(error){alert('Erro ao lançar no funcionário: '+error.message+'\n\nA mesa NÃO foi fechada.');return;}
+    await sb.from('mesa_itens').delete().eq('mesa_id',id);
+    await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
+    try{await registrarLog('Consumo funcionário (mesa)',`${nome}: ${fmt(total)}`);}catch(e){}
+    closeModal();alert(`✓ ${fmt(total)} lançado no consumo de ${nome}.`);
+  }catch(e){alert('Erro: '+e.message);}
+  finally{window._fechandoMesa=false;renderMesas();}
+}
+async function abrirMesa(id){await garantirMapaMesasFunc();const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(m.status==='livre'){openModal(`<h3>🍺 ${nomeMesa(id)}</h3><p style="color:var(--text2);font-size:13px;margin-bottom:18px">Abrir ${funcDaMesa(id)?'a mesa de '+escFunc(funcDaMesa(id))+'? O que for lançado aqui vai pro consumo dele(a).':'a mesa '+id+'?'}</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button></div>`);}else{await modalMesaAberta(id);}}
 async function confirmarAbrirMesa(id){try{const{error}=await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);if(error){alert('Erro ao abrir mesa: '+error.message);return;}closeModal();renderMesas();}catch(e){alert('Erro: '+e.message);}}
 async function modalMesaAberta(id){
+  await garantirMapaMesasFunc();const funcM=funcDaMesa(id);
   const[{data:m},{data:itens},{data:prods}]=await Promise.all([sb.from('mesas').select('*').eq('id',id).single(),sb.from('mesa_itens').select('*').eq('mesa_id',id),sb.from('produtos').select('*').order('nome')]);
   const I=itens||[];const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);const pagoParcial=m.pago_parcial||0;const restante=total-pagoParcial;
-  openModal(`<div style="display:flex;justify-content:space-between;align-items:center;"><h3 style="margin-bottom:0">🍺 Mesa ${id}</h3><button class="btn btn-teal btn-xs" onclick="imprimirComandaMesa(${id})">🖨️ Comanda</button></div>
+  openModal(`<div style="display:flex;justify-content:space-between;align-items:center;"><h3 style="margin-bottom:0">🍺 ${nomeMesa(id)}</h3><button class="btn btn-teal btn-xs" onclick="imprimirComandaMesa(${id})">🖨️ Comanda</button></div>
   <div style="display:flex;justify-content:space-between;margin:12px 0"><span style="color:var(--text2);font-size:12px">Aberta às ${fmtDate(m.aberta_em)}</span><div style="text-align:right"><div style="font-size:16px;font-weight:700;color:var(--gold2)">${fmt(total)}</div>${pagoParcial>0?`<div style="font-size:11px;color:var(--green)">Pago: ${fmt(pagoParcial)} | Restante: ${fmt(restante)}</div>`:''}</div></div>
-  ${I.length>0?`<button type="button" class="btn btn-teal btn-sm" style="width:100%;margin-bottom:10px;" onclick="toggleParcialArea(${id},${restante})">💵 Registrar Pagamento Parcial</button><div id="parcial-area" style="display:none;margin-bottom:10px;"></div>`:''}
+  ${I.length>0&&!funcM?`<button type="button" class="btn btn-teal btn-sm" style="width:100%;margin-bottom:10px;" onclick="toggleParcialArea(${id},${restante})">💵 Registrar Pagamento Parcial</button><div id="parcial-area" style="display:none;margin-bottom:10px;"></div>`:''}
   <div style="margin-bottom:10px;">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
       <label style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap;">Qtd</label>
@@ -1080,7 +1112,7 @@ async function modalMesaAberta(id){
     </div>
   </div>
   <div style="max-height:180px;overflow-y:auto;margin-bottom:10px;">${I.length===0?'<div class="empty" style="padding:20px"><p>Nenhum item</p></div>':I.map(i=>`<div class="item-row"><div><div style="font-size:12px;font-weight:500">${i.nome}</div><div style="font-size:11px;color:var(--text2)">${i.qty}x ${fmt(i.preco)} = <b style="color:var(--gold2)">${fmt(Number(i.preco)*i.qty)}</b></div></div><div style="display:flex;gap:6px;align-items:center"><button class="btn btn-xs" style="background:var(--green);color:#fff;border:none;min-width:34px;font-size:16px;font-weight:700" onclick="maisUmItemMesa(${i.id},${id})" title="Adicionar mais 1">+</button><button class="btn btn-danger btn-xs" onclick="removerItemMesa(${i.id},${id})">−</button></div></div>`).join('')}</div>
-  ${I.length>0?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${restante})">🔀 Dividir</button></div><div id="split-area" style="display:none;"></div><div style="display:flex;gap:7px;margin-top:10px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="fecharMesaVenda(${id})">✓ Fechar Mesa</button></div></div>`:`<div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button></div>`}`);
+  ${I.length>0&&funcM?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div style="font-size:12px;color:var(--text2);margin-bottom:8px">Ao fechar, os itens vão pro consumo de <b>${escFunc(funcM)}</b> na aba Funcionários (não entra como venda no caixa).</div><div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="lancarMesaNoFuncionario(${id})">👷 Lançar no consumo</button></div></div>`:I.length>0?`<div style="border-top:1px solid var(--border);padding-top:10px;"><div class="pay-methods"><button class="pay-btn sel" id="pay-dinheiro" onclick="selPay('dinheiro')">💵 Dinheiro</button><button class="pay-btn" id="pay-pix" onclick="selPay('pix')">📱 PIX</button><button class="pay-btn" id="pay-debito" onclick="selPay('debito')">💳 Débito</button><button class="pay-btn" id="pay-credito" onclick="selPay('credito')">💳 Crédito</button><button class="pay-btn" id="pay-dividir" onclick="toggleSplitPagamento(${restante})">🔀 Dividir</button></div><div id="split-area" style="display:none;"></div><div style="display:flex;gap:7px;margin-top:10px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger" style="flex:1" onclick="fecharMesaVenda(${id})">✓ Fechar Mesa</button></div></div>`:`<div style="display:flex;gap:7px;"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Fechar</button><button class="btn btn-danger btn-sm" onclick="cancelarMesa(${id})">Cancelar Mesa</button></div>`}`);
 }
 async function addItemMesa(mesaId){try{const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('nome,emoji').eq('id',pid).single();const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty,'mesa '+mesaId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
 async function addItemMesaTouch(mesaId,pid){try{const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(!prod)return;if((prod.estoque||0)<=0){if(!confirm(`⚠️ ${prod.nome} está com estoque ZERADO. Adicionar mesmo assim?`))return;}const preco=prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco;const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty,'mesa '+mesaId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
@@ -1169,6 +1201,7 @@ async function maisUmItemMesa(itemId,mesaId){
 }
 async function removerItemMesa(itemId,mesaId){const d=async()=>{try{const{data:item}=await sb.from('mesa_itens').select('*').eq('id',itemId).single();await sb.from('mesa_itens').delete().eq('id',itemId);if(item)await devolverEstoqueItem(item.prod_id,item.qty);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao remover item: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',d);}}
 async function fecharMesaVenda(id){
+  if(funcDaMesa(id))return lancarMesaNoFuncionario(id);
   if(window._fechandoMesa)return;window._fechandoMesa=true;
   try{const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(!m||m.status!=='ocupada'){await sb.from('mesa_itens').delete().eq('mesa_id',id);closeModal();renderMesas();return;}
   const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);const I=itens||[];const totalBruto=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);const pagoParcial=m.pago_parcial||0;
