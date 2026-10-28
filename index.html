@@ -479,7 +479,6 @@ function goTab(tab){
     produtos:renderProdutos,
     financeiro:renderFinanceiro,
     compras:()=>{ if(!modalAberto())carregarComprasDia(); },
-    cmv:renderCMV,
     comissoes:renderComissoes,
     tarefas:renderTarefas,
     anotacoes:renderAnotacoes,
@@ -2545,27 +2544,145 @@ ${status==='recebido'?`Estoque de ${prod.nome} atualizado: +${qty} unidades.`:'E
 }
 
 async function renderCMV(){
-  const[{data:V},{data:VI},{data:P}]=await Promise.all([sb.from('vendas').select('*').order('criado_em',{ascending:false}),sb.from('venda_itens').select('*'),sb.from('produtos').select('*')]);
-  const hoje=new Date();const inicioMes=new Date(hoje.getFullYear(),hoje.getMonth(),1);const inicioSemana=new Date(hoje);inicioSemana.setDate(hoje.getDate()-hoje.getDay());
-  function calcPeriodo(vendas){const totalV=vendas.reduce((s,v)=>s+Number(v.total),0);const idsV=new Set(vendas.map(v=>v.id));const itensV=(VI||[]).filter(i=>idsV.has(i.venda_id));const totalC=itensV.reduce((s,i)=>{const p=(P||[]).find(x=>i.nome.includes(x.nome));return s+(p?Number(p.custo)*i.qty:0);},0);const cmvPct=totalV>0?((totalC/totalV)*100).toFixed(1):0;return{totalV,totalC,cmvPct};}
-  const dHoje=calcPeriodo((V||[]).filter(v=>isHojeComercial(v.criado_em)));
-  const dSem=calcPeriodo((V||[]).filter(v=>new Date(v.criado_em)>=inicioSemana));
-  const dMes=calcPeriodo((V||[]).filter(v=>new Date(v.criado_em)>=inicioMes));
-  const dTodo=calcPeriodo(V||[]);
-  const porProd={};(VI||[]).forEach(i=>{const p=(P||[]).find(x=>i.nome.includes(x.nome));if(!porProd[i.nome])porProd[i.nome]={qty:0,vendas:0,custo:0};porProd[i.nome].qty+=i.qty;porProd[i.nome].vendas+=Number(i.total);porProd[i.nome].custo+=(p?Number(p.custo)*i.qty:0);});
+  const hoje=new Date();
+  const ini=hojeLocalStr(new Date(hoje.getFullYear(),hoje.getMonth(),1)),fim=hojeLocalStr(getDiaComercial().inicio);
+  const inp='padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;';
   document.getElementById('tab-content').innerHTML=`
-  <div class="section-hdr"><div><div class="section-title">&#128201; CMV — Custo da Mercadoria Vendida</div></div></div>
-  <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">CMV Hoje</div><div class="stat-value" style="color:${dHoje.cmvPct<=40?'var(--green)':dHoje.cmvPct<=60?'var(--gold2)':'var(--red)'}">${dHoje.cmvPct}%</div><div class="stat-sub">${fmt(dHoje.totalC)} de ${fmt(dHoje.totalV)}</div></div>
-    <div class="stat-card"><div class="stat-label">CMV Semana</div><div class="stat-value" style="color:${dSem.cmvPct<=40?'var(--green)':dSem.cmvPct<=60?'var(--gold2)':'var(--red)'}">${dSem.cmvPct}%</div><div class="stat-sub">${fmt(dSem.totalC)} de ${fmt(dSem.totalV)}</div></div>
-    <div class="stat-card"><div class="stat-label">CMV Mês</div><div class="stat-value" style="color:${dMes.cmvPct<=40?'var(--green)':dMes.cmvPct<=60?'var(--gold2)':'var(--red)'}">${dMes.cmvPct}%</div><div class="stat-sub">${fmt(dMes.totalC)} de ${fmt(dMes.totalV)}</div></div>
-    <div class="stat-card"><div class="stat-label">CMV Total</div><div class="stat-value" style="color:${dTodo.cmvPct<=40?'var(--green)':dTodo.cmvPct<=60?'var(--gold2)':'var(--red)'}">${dTodo.cmvPct}%</div><div class="stat-sub">${fmt(dTodo.totalC)} de ${fmt(dTodo.totalV)}</div></div>
+  <div class="section-hdr"><div><div class="section-title">📉 CMV — Custo da Mercadoria Vendida</div><div class="section-sub">Quanto custou o que foi vendido, lucro bruto e margem por produto</div></div>
+    <button class="btn btn-primary btn-sm" onclick="gerarPDFCMV()">🖨 PDF</button></div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
+    <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Início</div><input type="date" id="cmv-ini" value="${ini}" style="${inp}"></div>
+    <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Fim</div><input type="date" id="cmv-fim" value="${fim}" style="${inp}"></div>
+    <button class="btn btn-primary" onclick="carregarCMV()">🔍 Calcular</button>
+    <div style="display:flex;gap:5px;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-xs" onclick="atalhoCMV('hoje')">Hoje</button>
+      <button class="btn btn-secondary btn-xs" onclick="atalhoCMV('7')">7 dias</button>
+      <button class="btn btn-secondary btn-xs" onclick="atalhoCMV('mes')">Este mês</button>
+      <button class="btn btn-secondary btn-xs" onclick="atalhoCMV('mesant')">Mês passado</button>
+      <button class="btn btn-secondary btn-xs" onclick="atalhoCMV('30')">30 dias</button>
+    </div>
   </div>
-  <div class="section-hdr"><div class="section-title">CMV por Produto</div></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Produto</th><th>Qtd</th><th>Faturamento</th><th>Custo</th><th>CMV %</th><th>Margem</th></tr></thead>
-    <tbody>${Object.entries(porProd).sort((a,b)=>b[1].vendas-a[1].vendas).map(([nome,d])=>{const cmv=d.vendas>0?((d.custo/d.vendas)*100).toFixed(0):0;const margem=d.vendas>0?(((d.vendas-d.custo)/d.vendas)*100).toFixed(0):0;return`<tr><td>${nome}</td><td>${d.qty}</td><td style="color:var(--gold2)">${fmt(d.vendas)}</td><td style="color:var(--red)">${fmt(d.custo)}</td><td><div class="cmv-bar"><div class="cmv-fill" style="width:${Math.min(cmv,100)}%;background:${cmv<=40?'var(--green)':cmv<=60?'var(--gold)':'var(--red)'}"></div></div><span style="font-size:11px">${cmv}%</span></td><td><span class="badge ${margem>=50?'badge-green':margem>=30?'badge-gold':'badge-red'}">${margem}%</span></td></tr>`;}).join('')}</tbody>
-  </table></div>`;
+  <div id="cmv-conteudo"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
+  carregarCMV();
+}
+function atalhoCMV(t){
+  const base=getDiaComercial().inicio;let a=new Date(base),b=new Date(base);
+  if(t==='7')a.setDate(a.getDate()-6);
+  else if(t==='30')a.setDate(a.getDate()-29);
+  else if(t==='mes')a=new Date(base.getFullYear(),base.getMonth(),1);
+  else if(t==='mesant'){a=new Date(base.getFullYear(),base.getMonth()-1,1);b=new Date(base.getFullYear(),base.getMonth(),0);}
+  document.getElementById('cmv-ini').value=hojeLocalStr(a);document.getElementById('cmv-fim').value=hojeLocalStr(b);carregarCMV();
+}
+async function buscarTodosCMV(fn){let out=[],de=0;const passo=1000;while(true){const{data,error}=await fn().range(de,de+passo-1);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<passo)break;de+=passo;}return out;}
+function acharProdutoCMV(nomeItem,P,idx){
+  const limpo=normalizarTexto(String(nomeItem||'').replace(/^[^\p{L}\p{N}]+/u,'').replace(/\s*\(.*?\)\s*$/,''));
+  if(idx[limpo])return idx[limpo];
+  let melhor=null;const alvo=normalizarTexto(nomeItem);
+  P.forEach(p=>{const n=normalizarTexto(p.nome);if(n&&alvo.includes(n)&&(!melhor||n.length>normalizarTexto(melhor.nome).length))melhor=p;});
+  return melhor;
+}
+async function carregarCMV(){
+  const el=document.getElementById('cmv-conteudo');if(!el)return;
+  const ini=document.getElementById('cmv-ini').value,fim=document.getElementById('cmv-fim').value||ini;
+  if(!ini||fim<ini){el.innerHTML='<div class="empty"><p style="color:var(--red)">Confira as datas.</p></div>';return;}
+  if(!window._cmvCache||window._cmvCache.ini!==ini||window._cmvCache.fim!==fim)el.innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  const{tsIni,tsFim}=intervaloComercial(ini,fim);
+  let V=[],I=[],P=[],PR=[],FC=[];
+  try{
+    const[rP,vendas,perdas]=await Promise.all([
+      sb.from('produtos').select('*'),
+      buscarTodosCMV(()=>sb.from('vendas').select('id,total,criado_em').gte('criado_em',tsIni).lte('criado_em',tsFim).order('id')),
+      buscarTodosCMV(()=>sb.from('perdas').select('*').gte('criado_em',tsIni).lte('criado_em',tsFim).order('id'))
+    ]);
+    if(rP.error)throw rP.error;P=rP.data||[];V=vendas;PR=perdas;
+    const ids=V.map(v=>v.id);
+    for(let i=0;i<ids.length;i+=200){const{data,error}=await sb.from('venda_itens').select('*').in('venda_id',ids.slice(i,i+200));if(error)throw error;I=I.concat(data||[]);}
+    try{const{data}=await sb.from('func_lancamentos').select('*').eq('tipo','consumo').gte('data',ini).lte('data',fim);FC=data||[];}catch(e){}
+  }catch(e){el.innerHTML=`<div class="empty"><p style="color:var(--red)">Erro ao calcular: ${escFunc(e.message)}</p></div>`;return;}
+
+  const idx={};P.forEach(p=>{idx[normalizarTexto(p.nome)]=p;});
+  const diaDe=ts=>{const d=new Date(ts);if(d.getHours()<6)d.setDate(d.getDate()-1);return hojeLocalStr(d);};
+  const vendaDia={};V.forEach(v=>{vendaDia[v.id]=diaDe(v.criado_em);});
+  const faturamento=V.reduce((s,v)=>s+Number(v.total),0);
+  const porProd={},porCat={},porDia={},semCusto={},naoIdent={};
+  let custoVendas=0,fatItens=0;
+  I.forEach(i=>{
+    const p=acharProdutoCMV(i.nome,P,idx),qty=Number(i.qty)||0,tot=Number(i.total)||0;
+    const custoU=p?Number(p.custo)||0:0,custo=custoU*qty,chave=p?p.nome:String(i.nome||'').replace(/^[^\p{L}\p{N}]+/u,'');
+    if(!p)naoIdent[chave]=(naoIdent[chave]||0)+qty;else if(!custoU)semCusto[p.nome]=true;
+    if(!porProd[chave])porProd[chave]={emoji:p?p.emoji||'':'❔',cat:p?p.cat||'Outros':'Outros',qty:0,fat:0,custo:0,custoU,precoAtual:p?Number(p.preco):0};
+    const d=porProd[chave];d.qty+=qty;d.fat+=tot;d.custo+=custo;
+    const c=d.cat;if(!porCat[c])porCat[c]={fat:0,custo:0,qty:0};porCat[c].fat+=tot;porCat[c].custo+=custo;porCat[c].qty+=qty;
+    const dia=vendaDia[i.venda_id];if(dia){if(!porDia[dia])porDia[dia]={fat:0,custo:0};porDia[dia].custo+=custo;}
+    custoVendas+=custo;fatItens+=tot;
+  });
+  V.forEach(v=>{const d=vendaDia[v.id];if(!porDia[d])porDia[d]={fat:0,custo:0};porDia[d].fat+=Number(v.total);});
+  const custoPerdas=PR.reduce((s,p)=>s+Number(p.custo_total||0),0);
+  const custoConsumo=FC.reduce((s,l)=>{const p=P.find(x=>x.id===l.prod_id);return s+(p?(Number(p.custo)||0)*Number(l.qty||1):0);},0);
+  const lucroBruto=faturamento-custoVendas,cmvPct=faturamento>0?custoVendas/faturamento*100:0,margem=faturamento>0?lucroBruto/faturamento*100:0;
+  const custoReal=custoVendas+custoPerdas+custoConsumo,cmvReal=faturamento>0?custoReal/faturamento*100:0;
+  const nDias=Object.keys(porDia).length||1,ticket=V.length?faturamento/V.length:0;
+  const prods=Object.entries(porProd).map(([n,d])=>({nome:n,...d,lucro:d.fat-d.custo,margem:d.fat>0?(d.fat-d.custo)/d.fat*100:0,cmv:d.fat>0?d.custo/d.fat*100:0}));
+  const ordem=window._cmvOrdem||'lucro';prods.sort((a,b)=>b[ordem]-a[ordem]);
+  const lucroTotalProds=prods.reduce((s,p)=>s+p.lucro,0)||1;
+  const cats=Object.entries(porCat).map(([c,d])=>({cat:c,...d,lucro:d.fat-d.custo,margem:d.fat>0?(d.fat-d.custo)/d.fat*100:0})).sort((a,b)=>b.lucro-a.lucro);
+  const dias=Object.keys(porDia).sort();
+  const baixaMargem=prods.filter(p=>p.custoU>0&&p.fat>0&&p.margem<30).sort((a,b)=>a.margem-b.margem);
+  const corCmv=v=>v<=40?'var(--green)':v<=55?'var(--gold2)':'var(--red)';
+  const corMg=v=>v>=50?'badge-green':v>=30?'badge-gold':'badge-red';
+  const periodo=ini===fim?fmtDateOnly(ini+'T12:00:00'):`${fmtDateOnly(ini+'T12:00:00')} a ${fmtDateOnly(fim+'T12:00:00')}`;
+  window._cmvCache={ini,fim,periodo,faturamento,custoVendas,lucroBruto,cmvPct,margem,custoPerdas,custoConsumo,custoReal,cmvReal,ticket,nVendas:V.length,nDias,prods,cats,dias,porDia,baixaMargem,semCusto:Object.keys(semCusto),naoIdent};
+  const maxDia=Math.max(1,...dias.map(d=>porDia[d].fat));
+  const alertas=[];
+  if(Object.keys(semCusto).length)alertas.push(`⚠️ <b>${Object.keys(semCusto).length} produto(s) vendidos sem custo cadastrado</b> — o CMV fica menor do que é de verdade: ${Object.keys(semCusto).map(escFunc).join(', ')}. Cadastre o custo na aba Produtos.`);
+  if(Object.keys(naoIdent).length)alertas.push(`❔ Itens vendidos que não batem com nenhum produto atual (renomeado ou excluído): ${Object.entries(naoIdent).map(([n,q])=>`${escFunc(n)} (${q})`).join(', ')}.`);
+  if(baixaMargem.length)alertas.push(`📉 <b>Margem abaixo de 30%:</b> ${baixaMargem.slice(0,6).map(p=>`${escFunc(p.nome)} (${p.margem.toFixed(0)}%)`).join(', ')}. Vale rever preço ou custo.`);
+  if(custoPerdas>0&&faturamento>0&&custoPerdas/faturamento>0.02)alertas.push(`🗑 Perdas custaram ${fmt(custoPerdas)} (${(custoPerdas/faturamento*100).toFixed(1)}% do faturamento).`);
+  const th=(k,t)=>`<th style="cursor:pointer;white-space:nowrap" onclick="window._cmvOrdem='${k}';carregarCMV()">${t}${ordem===k?' ▼':''}</th>`;
+  el.innerHTML=`
+  <div style="font-size:13px;color:var(--gold2);font-weight:700;margin-bottom:10px">📅 ${periodo} · ${V.length} vendas em ${dias.length} dia(s)</div>
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Faturamento</div><div class="stat-value">${fmt(faturamento)}</div><div class="stat-sub">ticket médio ${fmt(ticket)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Custo do que vendeu</div><div class="stat-value">${fmt(custoVendas)}</div></div>
+    <div class="stat-card"><div class="stat-label">CMV</div><div class="stat-value" style="color:${corCmv(cmvPct)}">${cmvPct.toFixed(1)}%</div><div class="cmv-bar"><div class="cmv-fill" style="width:${Math.min(cmvPct,100)}%;background:${corCmv(cmvPct)}"></div></div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Lucro bruto</div><div class="stat-value">${fmt(lucroBruto)}</div><div class="stat-sub">margem ${margem.toFixed(1)}% · ${fmt(lucroBruto/nDias)}/dia</div></div>
+  </div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px;">
+    <div style="font-size:14px;font-weight:700;margin-bottom:8px">🧮 CMV real (com perdas e consumo dos funcionários)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;font-size:12px;color:var(--text2)">
+      <div>Custo das vendas<br><b style="color:var(--text);font-size:14px">${fmt(custoVendas)}</b></div>
+      <div>+ Perdas (custo)<br><b style="color:var(--red);font-size:14px">${fmt(custoPerdas)}</b></div>
+      <div>+ Consumo funcionários (custo)<br><b style="color:#b06ed4;font-size:14px">${fmt(custoConsumo)}</b></div>
+      <div>= Custo total<br><b style="color:var(--text);font-size:14px">${fmt(custoReal)}</b></div>
+      <div>CMV real<br><b style="color:${corCmv(cmvReal)};font-size:18px">${cmvReal.toFixed(1)}%</b></div>
+      <div>Lucro após perdas/consumo<br><b style="color:var(--green);font-size:14px">${fmt(faturamento-custoReal)}</b></div>
+    </div>
+  </div>
+  ${alertas.length?`<div style="background:var(--card);border:1px solid rgba(212,160,23,0.4);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:12px;line-height:1.6">${alertas.map(a=>`<div style="padding:3px 0">${a}</div>`).join('')}</div>`:''}
+  ${dias.length>1?`<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px"><div style="font-size:14px;font-weight:700">📊 Faturamento × custo por dia</div><div style="font-size:11px;color:var(--text2)"><span style="color:var(--gold2)">■</span> lucro bruto <span style="color:var(--red);margin-left:8px">■</span> custo</div></div>
+    <div style="display:flex;align-items:flex-end;gap:3px;height:150px;overflow-x:auto;padding-bottom:2px">
+      ${dias.map(d=>{const x=porDia[d],hF=x.fat/maxDia*130,hC=Math.min(x.custo,x.fat)/maxDia*130,pc=x.fat>0?x.custo/x.fat*100:0;return`<div title="${fmtDateOnly(d+'T12:00:00')}\nFaturamento: ${fmt(x.fat)}\nCusto: ${fmt(x.custo)}\nCMV: ${pc.toFixed(0)}%" style="flex:1;min-width:14px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
+        <div style="width:100%;max-width:34px;height:${hF}px;background:var(--gold);border-radius:3px 3px 0 0;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden"><div style="height:${hC}px;background:var(--red)"></div></div>
+        <div style="font-size:9px;color:var(--text3);margin-top:3px">${d.slice(8,10)}</div></div>`;}).join('')}
+    </div></div>`:''}
+  <div class="section-hdr"><div class="section-title">🏷️ Por categoria</div></div>
+  <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Categoria</th><th>Qtd</th><th>Faturamento</th><th>Custo</th><th>Lucro</th><th>Margem</th></tr></thead>
+    <tbody>${cats.length?cats.map(c=>`<tr><td><span class="badge badge-blue">${escFunc(c.cat)}</span></td><td>${c.qty}</td><td style="color:var(--gold2)">${fmt(c.fat)}</td><td style="color:var(--red)">${fmt(c.custo)}</td><td style="color:var(--green);font-weight:600">${fmt(c.lucro)}</td><td><span class="badge ${corMg(c.margem)}">${c.margem.toFixed(0)}%</span></td></tr>`).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Sem vendas no período</td></tr>'}</tbody></table></div>
+  <div class="section-hdr"><div><div class="section-title">📦 Por produto</div><div class="section-sub">Toque no título da coluna pra ordenar</div></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Produto</th>${th('qty','Qtd')}${th('fat','Faturamento')}<th>Custo un.</th>${th('custo','Custo total')}${th('lucro','Lucro')}${th('margem','Margem')}<th>% do lucro</th></tr></thead>
+    <tbody>${prods.length?prods.map(p=>`<tr><td>${p.emoji} <b>${escFunc(p.nome)}</b>${!p.custoU?' <span class="badge badge-red" title="Sem custo cadastrado">sem custo</span>':''}</td><td>${p.qty}</td><td style="color:var(--gold2)">${fmt(p.fat)}</td><td style="color:var(--text2)">${fmt(p.custoU)}</td><td style="color:var(--red)">${fmt(p.custo)}</td><td style="color:var(--green);font-weight:700">${fmt(p.lucro)}</td><td><span class="badge ${corMg(p.margem)}">${p.margem.toFixed(0)}%</span></td><td style="min-width:90px"><div class="cmv-bar" style="margin-top:0"><div class="cmv-fill" style="width:${Math.max(0,Math.min(100,p.lucro/lucroTotalProds*100))}%;background:var(--gold)"></div></div><span style="font-size:10px;color:var(--text3)">${(p.lucro/lucroTotalProds*100).toFixed(1)}%</span></td></tr>`).join(''):'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">Sem vendas no período</td></tr>'}</tbody></table></div>
+  <div style="font-size:11px;color:var(--text3);margin-top:8px">O custo usado é o <b>custo atual</b> cadastrado em cada produto. Se o custo mudou no meio do período, o cálculo usa o valor de hoje.</div>`;
+}
+function gerarPDFCMV(){
+  const c=window._cmvCache;if(!c){alert('Calcule o CMV primeiro.');return;}
+  const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
+  const stats=st('Faturamento',fmt(c.faturamento))+st('Custo das vendas',fmt(c.custoVendas))+st('CMV',c.cmvPct.toFixed(1)+'%')+st('Lucro bruto',fmt(c.lucroBruto))+st('Margem',c.margem.toFixed(1)+'%')+st('Ticket médio',fmt(c.ticket))+st('Perdas (custo)',fmt(c.custoPerdas))+st('Consumo func. (custo)',fmt(c.custoConsumo))+st('CMV real',c.cmvReal.toFixed(1)+'%');
+  const cat=`<h2>Por categoria</h2><table><thead><tr><th>Categoria</th><th>Qtd</th><th>Faturamento</th><th>Custo</th><th>Lucro</th><th>Margem</th></tr></thead><tbody>${c.cats.map(x=>`<tr><td>${escFunc(x.cat)}</td><td>${x.qty}</td><td>${fmt(x.fat)}</td><td>${fmt(x.custo)}</td><td>${fmt(x.lucro)}</td><td>${x.margem.toFixed(0)}%</td></tr>`).join('')}</tbody></table>`;
+  const pr=`<h2>Por produto</h2><table><thead><tr><th>Produto</th><th>Qtd</th><th>Faturamento</th><th>Custo un.</th><th>Custo total</th><th>Lucro</th><th>Margem</th></tr></thead><tbody>${c.prods.map(p=>`<tr><td>${escFunc(p.nome)}${!p.custoU?' (sem custo)':''}</td><td>${p.qty}</td><td>${fmt(p.fat)}</td><td>${fmt(p.custoU)}</td><td>${fmt(p.custo)}</td><td>${fmt(p.lucro)}</td><td>${p.margem.toFixed(0)}%</td></tr>`).join('')}</tbody></table>`;
+  const dia=c.dias.length>1?`<h2>Por dia</h2><table><thead><tr><th>Dia</th><th>Faturamento</th><th>Custo</th><th>Lucro</th><th>CMV</th></tr></thead><tbody>${c.dias.map(d=>{const x=c.porDia[d];return`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td>${fmt(x.fat)}</td><td>${fmt(x.custo)}</td><td>${fmt(x.fat-x.custo)}</td><td>${x.fat>0?(x.custo/x.fat*100).toFixed(1):0}%</td></tr>`;}).join('')}</tbody></table>`:'';
+  const obs=`<p style="font-size:11px;color:#666">Custo calculado com o custo atual cadastrado de cada produto.${c.semCusto.length?' Produtos sem custo: '+c.semCusto.map(escFunc).join(', ')+'.':''}</p>`;
+  abrirJanelaImpressaoCaixa('Relatório de CMV',c.periodo,stats,cat+pr+dia+obs);
 }
 
 async function renderComissoes(){
