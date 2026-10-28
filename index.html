@@ -756,6 +756,20 @@ async function renderDashboard(){
   },30000);
 }
 
+// 🍺 Consumo dos funcionários dentro do Caixa (informativo — não soma nas vendas nem no saldo)
+async function carregarConsumoFuncPeriodo(ini,fim){try{const{data,error}=await sb.from('func_lancamentos').select('*').eq('tipo','consumo').gte('data',ini).lte('data',fim).order('data',{ascending:true}).order('criado_em',{ascending:true});if(error)throw error;return data||[];}catch(e){return [];}}
+function agruparConsumoFunc(C){const g={};(C||[]).forEach(l=>{if(!g[l.funcionario])g[l.funcionario]={total:0,itens:[]};g[l.funcionario].total+=Number(l.valor);g[l.funcionario].itens.push(l);});return Object.entries(g).sort((a,b)=>b[1].total-a[1].total);}
+function htmlConsumoFuncCaixa(C,multiDia){
+  const tot=(C||[]).reduce((s,l)=>s+Number(l.valor),0),G=agruparConsumoFunc(C);
+  return`<div style="background:var(--card);border:1px solid rgba(176,110,212,0.35);border-radius:var(--radius);padding:14px;margin-bottom:18px;">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:${G.length?'10px':'0'}"><div><div style="font-size:14px;font-weight:700;color:#b06ed4">🍺 Consumo dos funcionários</div><div style="font-size:11px;color:var(--text2);margin-top:2px">Baixou do estoque normal — não entra nas vendas nem no saldo</div></div><div style="font-size:15px;font-weight:800;color:#b06ed4">${fmt(tot)}</div></div>
+    ${G.length===0?'<div style="font-size:12px;color:var(--text3)">Nenhum consumo de funcionário.</div>':G.map(([n,d])=>`<div style="border-top:1px solid var(--border);padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700"><span>👷 Consumo de ${escFunc(n)}</span><span style="color:var(--red)">${fmt(d.total)}</span></div><div style="font-size:11px;color:var(--text2);margin-top:3px">${d.itens.map(l=>`${multiDia?fmtDateOnly(l.data+'T12:00:00').slice(0,5)+' ':''}${escFunc(l.descricao)} (${fmt(l.valor)})`).join(' · ')}</div></div>`).join('')}
+  </div>`;
+}
+function htmlConsumoFuncPDF(C,multiDia){
+  if(!(C||[]).length)return'';const tot=C.reduce((s,l)=>s+Number(l.valor),0);
+  return`<h2>🍺 Consumo dos Funcionários — ${fmt(tot)}</h2><p style="font-size:11px;color:#666;margin-top:-4px">Baixou do estoque, não entra nas vendas nem no saldo.</p><table><thead><tr><th>Funcionário</th><th>Itens</th><th>Total</th></tr></thead><tbody>${agruparConsumoFunc(C).map(([n,d])=>`<tr><td><b>Consumo de ${escFunc(n)}</b></td><td>${d.itens.map(l=>`${multiDia?fmtDateOnly(l.data+'T12:00:00').slice(0,5)+' ':''}${escFunc(l.descricao)} (${fmt(l.valor)})`).join('<br>')}</td><td>${fmt(d.total)}</td></tr>`).join('')}</tbody></table>`;
+}
 async function renderCaixa(){
   await carregarEstadoCaixa();
   const hoje=hojeLocalStr();
@@ -815,8 +829,9 @@ async function carregarCaixaDia(){
   const totalPerdasQty=perdas.reduce((s,p)=>s+Number(p.qty),0);
   const totalPerdasCusto=perdas.reduce((s,p)=>s+Number(p.custo_total),0);
   const porPag={};vendas.forEach(v=>{porPag[v.pagamento]=(porPag[v.pagamento]||0)+Number(v.total);});
+  const consumoFunc=await carregarConsumoFuncPeriodo(data,data);
   const el=document.getElementById('caixa-dia-conteudo');if(!el)return;
-  window._caixaDiaCache={data,vendas,saidas,perdas,logsCaixa,totalVendas,totalSaidas,totalPerdasQty,totalPerdasCusto,porPag,itensPorVenda};
+  window._caixaDiaCache={data,vendas,saidas,perdas,logsCaixa,totalVendas,totalSaidas,totalPerdasQty,totalPerdasCusto,porPag,itensPorVenda,consumoFunc};
   const logHtml=logsCaixa.length===0?'':`
   <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;">
     <div style="font-size:12px;font-weight:700;color:var(--gold2);margin-bottom:6px;">&#128272; Abertura/Fechamento do Caixa</div>
@@ -861,6 +876,8 @@ async function carregarCaixaDia(){
         </tr>`).join('')}</tbody>
       </table></div>`}
   </div>
+
+  ${htmlConsumoFuncCaixa(consumoFunc,false)}
 
   ${vendas.length===0?`<div class="empty"><div class="empty-icon">&#128205;</div><p>Nenhuma venda neste dia</p></div>`:`
   <div class="section-hdr"><div class="section-title">Vendas do Dia</div><span style="font-size:11px;color:var(--text2)">${vendas.length} transações</span></div>
@@ -908,7 +925,8 @@ async function carregarCaixaPeriodo(){
   });
   const diasOrdenados=Object.keys(porDia).sort();
   const diasHtml=diasOrdenados.map(d=>`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td style="text-align:right;font-weight:600;color:var(--gold2)">${fmt(porDia[d])}</td><td style="text-align:center"><button class="btn btn-teal btn-xs" onclick="gerarPDFCaixaDiaEspecifico('${d}')">🖨️ PDF</button></td></tr>`).join('');
-  window._caixaPeriodoCache={dataIni,dataFimStr,vendas,saidas,perdas,totalVendas,totalSaidas,totalPerdasCusto,porPag,porDia,itensPorVendaPeriodo};
+  const consumoFunc=await carregarConsumoFuncPeriodo(dataIni,dataFimStr);
+  window._caixaPeriodoCache={dataIni,dataFimStr,vendas,saidas,perdas,totalVendas,totalSaidas,totalPerdasCusto,porPag,porDia,itensPorVendaPeriodo,consumoFunc};
   el.innerHTML=`
   <div class="section-hdr"><div><div class="section-title">📊 Período: ${fmtDateOnly(dataIni+'T12:00:00')} até ${fmtDateOnly(dataFimStr+'T12:00:00')}</div><div class="section-sub">${vendas.length} transações no período</div></div>
   <button class="btn btn-secondary btn-sm" onclick="gerarPDFCaixaPeriodo()">🖨️ Baixar PDF do Período</button></div>
@@ -921,6 +939,7 @@ async function carregarCaixaPeriodo(){
     <div class="stat-card"><div class="stat-label">Cartões</div><div class="stat-value" style="color:var(--purple)">${fmt((porPag['debito']||0)+(porPag['credito']||0))}</div></div>
     <div class="stat-card" style="border-color:rgba(192,57,43,0.4)"><div class="stat-label">🗑 Perdas (custo)</div><div class="stat-value" style="color:var(--red)">${fmt(totalPerdasCusto)}</div></div>
   </div>
+  ${htmlConsumoFuncCaixa(consumoFunc,true)}
   ${diasOrdenados.length===0?'':`
   <div class="section-hdr" style="margin-top:6px"><div class="section-title" style="font-size:14px">Total vendido por dia</div></div>
   <div class="table-wrap" style="margin-bottom:22px"><table><thead><tr><th>Dia</th><th style="text-align:right">Total Vendido</th><th style="text-align:center">Comprovante</th></tr></thead>
@@ -970,7 +989,7 @@ function gerarPDFCaixaDia(){
   const perdasHtml=c.perdas.length===0?'':`<h2>🗑 Perdas do Dia</h2>
     <table><thead><tr><th>Horário</th><th>Produto</th><th>Qtd</th><th>Motivo</th><th>Custo Total</th><th>Operador</th></tr></thead>
     <tbody>${c.perdas.map(p=>`<tr><td>${fmtDateFull(p.criado_em)}</td><td>${p.produto}</td><td>-${p.qty}</td><td>${p.motivo}</td><td>${fmt(p.custo_total)}</td><td>${p.operador||''}</td></tr>`).join('')}</tbody></table>`;
-  abrirJanelaImpressaoCaixa('Fechamento de Caixa',fmtDateOnly(c.data+'T12:00:00'),statsHtml,`<h2>Vendas do Dia</h2>${vendasHtml}${perdasHtml}`);
+  abrirJanelaImpressaoCaixa('Fechamento de Caixa',fmtDateOnly(c.data+'T12:00:00'),statsHtml,`<h2>Vendas do Dia</h2>${vendasHtml}${perdasHtml}${htmlConsumoFuncPDF(c.consumoFunc,false)}`);
 }
 function gerarPDFCaixaPeriodo(){
   const c=window._caixaPeriodoCache;if(!c){alert('Carregue os dados do período primeiro.');return;}
@@ -987,7 +1006,7 @@ function gerarPDFCaixaPeriodo(){
     <tbody>${diasOrdenados.map(d=>`<tr><td>${fmtDateOnly(d+'T12:00:00')}</td><td>${fmt(c.porDia[d])}</td></tr>`).join('')}</tbody></table>`;
   const vendasHtml=`<h2>Todas as Vendas do Período</h2><table><thead><tr><th>Horário</th><th>Local</th><th>Produtos</th><th>Total</th><th>Pagamento</th><th>Operador</th></tr></thead>
     <tbody>${c.vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td>${(c.itensPorVendaPeriodo[v.id]||[]).length?(c.itensPorVendaPeriodo[v.id]||[]).map(i=>`${i.qty}x ${i.nome}`).join(', '):'—'}</td><td>${fmt(v.total)}</td><td>${(v.pagamento||'').toUpperCase()}</td><td>${v.operador||''}</td></tr>`).join('')}</tbody></table>`;
-  abrirJanelaImpressaoCaixa('Relatório de Período',fmtDateOnly(c.dataIni+'T12:00:00')+' até '+fmtDateOnly(c.dataFimStr+'T12:00:00'),statsHtml,porDiaHtml+vendasHtml);
+  abrirJanelaImpressaoCaixa('Relatório de Período',fmtDateOnly(c.dataIni+'T12:00:00')+' até '+fmtDateOnly(c.dataFimStr+'T12:00:00'),statsHtml,porDiaHtml+vendasHtml+htmlConsumoFuncPDF(c.consumoFunc,true));
 }
 async function gerarPDFCaixaDiaEspecifico(dataStr){
   const tsInicio=new Date(`${dataStr}T06:00:00`).toISOString();const dtFim=new Date(`${dataStr}T06:00:00`);dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);const tsFim=dtFim.toISOString();
@@ -1018,7 +1037,8 @@ async function gerarPDFCaixaDiaEspecifico(dataStr){
     const perdasHtml=perdas.length===0?'':`<h2>🗑 Perdas do Dia</h2>
       <table><thead><tr><th>Horário</th><th>Produto</th><th>Qtd</th><th>Motivo</th><th>Custo Total</th><th>Operador</th></tr></thead>
       <tbody>${perdas.map(p=>`<tr><td>${fmtDateFull(p.criado_em)}</td><td>${p.produto}</td><td>-${p.qty}</td><td>${p.motivo}</td><td>${fmt(p.custo_total)}</td><td>${p.operador||''}</td></tr>`).join('')}</tbody></table>`;
-    abrirJanelaImpressaoCaixa('Fechamento de Caixa',fmtDateOnly(dataStr+'T12:00:00'),statsHtml,`<h2>Vendas do Dia</h2>${vendasHtml}${perdasHtml}`);
+    const consumoFunc=await carregarConsumoFuncPeriodo(dataStr,dataStr);
+    abrirJanelaImpressaoCaixa('Fechamento de Caixa',fmtDateOnly(dataStr+'T12:00:00'),statsHtml,`<h2>Vendas do Dia</h2>${vendasHtml}${perdasHtml}${htmlConsumoFuncPDF(consumoFunc,false)}`);
   }catch(e){alert('Erro ao gerar PDF do dia: '+e.message);}
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
