@@ -218,6 +218,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <button class="nav-btn adm-only" onclick="goTab('cmv')">📉 CMV</button>
     <!-- aba Comissões oculta (dados mantidos no Supabase) -->
     <!-- aba Tarefas oculta (dados mantidos no Supabase) -->
+    <button class="nav-btn" onclick="goTab('funcionarios')">👷 Funcionários</button>
     <button class="nav-btn" onclick="goTab('anotacoes')">📝 Notas</button>
     <button class="nav-btn adm-only" onclick="goTab('relatorios')">📈 Relatórios</button>
     <button class="nav-btn adm-only" onclick="goTab('configuracoes')">⚙️ Config</button>
@@ -468,7 +469,7 @@ function goTab(tab){
   const tabs={dashboard:renderDashboard,caixa:renderCaixa,mesas:renderMesas,balcao:renderBalcao,
     estoque:renderEstoque,bruno:renderBruno,produtos:renderProdutos,financeiro:renderFinanceiro,
     compras:renderCompras,cmv:renderCMV,comissoes:renderComissoes,tarefas:renderTarefas,
-    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao};
+    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao,funcionarios:()=>{funcSel=null;renderFuncionarios();}};
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
@@ -482,7 +483,8 @@ function goTab(tab){
     tarefas:renderTarefas,
     anotacoes:renderAnotacoes,
     bruno:()=>{ if(!modalAberto()){carregarStatsBruno();carregarHistoricoBruno();} },
-    relatorios:()=>{ if(!modalAberto())aplicarFiltroRelatorio(); }
+    relatorios:()=>{ if(!modalAberto())aplicarFiltroRelatorio(); },
+    funcionarios:renderFuncionarios
   };
   if(pollMap[tab]){
     globalPollingInterval=setInterval(()=>{
@@ -2534,6 +2536,201 @@ function novaTarefa(){openModal(`<h3>&#9989; Nova Tarefa</h3><div class="modal-f
 async function salvarTarefa(){const titulo=document.getElementById('tar-titulo').value.trim();if(!titulo)return;try{const{error}=await sb.from('tarefas').insert({titulo,descricao:document.getElementById('tar-desc').value,prioridade:document.getElementById('tar-prio').value,concluida:false});if(error){alert('Erro ao salvar tarefa: '+error.message);return;}closeModal();renderTarefas();}catch(e){alert('Erro: '+e.message);}}
 async function toggleTarefa(id,status){try{await sb.from('tarefas').update({concluida:status}).eq('id',id);renderTarefas();}catch(e){alert('Erro ao atualizar tarefa: '+e.message);}}
 async function deletarTarefa(id){try{const{error}=await sb.from('tarefas').delete().eq('id',id);if(error){alert('Erro ao deletar tarefa: '+error.message);return;}renderTarefas();}catch(e){alert('Erro: '+e.message);}}
+
+// ══════════════════════════════════════════════
+// 👷 FUNCIONÁRIOS — consumo, vales e diárias
+// ══════════════════════════════════════════════
+const FUNCIONARIOS=['Luigi','Idalina','Bruno R','Bruno C','Vitória'];
+const DIARIA_NORMAL=55,DIARIA_FESTA=110;
+let funcSel=null,funcVerFechados=false;
+function escFunc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function resumoFunc(L){
+  const dias=L.filter(l=>l.tipo==='dia'),festas=L.filter(l=>l.tipo==='festa');
+  const consumo=L.filter(l=>l.tipo==='consumo').reduce((s,l)=>s+Number(l.valor),0);
+  const vales=L.filter(l=>l.tipo==='vale').reduce((s,l)=>s+Number(l.valor),0);
+  const ganhos=dias.reduce((s,l)=>s+Number(l.valor),0)+festas.reduce((s,l)=>s+Number(l.valor),0);
+  return{nDias:dias.length,nFestas:festas.length,ganhos,consumo,vales,liquido:ganhos-consumo-vales};
+}
+async function carregarLancFunc(nome,fechados){
+  let q=sb.from('func_lancamentos').select('*').order('data',{ascending:false}).order('criado_em',{ascending:false});
+  if(nome)q=q.eq('funcionario',nome);
+  if(!fechados)q=q.eq('fechado',false);
+  const{data,error}=await q;if(error)throw error;return data||[];
+}
+async function renderFuncionarios(){
+  if(funcSel)return renderFuncDetalhe(funcSel);
+  let L=[];
+  try{L=await carregarLancFunc(null,false);}catch(e){document.getElementById('tab-content').innerHTML=`<div class="empty"><div class="empty-icon">⚠️</div><p>Erro ao carregar: ${escFunc(e.message)}<br><span style="font-size:11px">Confira se a tabela <b>func_lancamentos</b> foi criada no Supabase (com RLS desativado).</span></p></div>`;return;}
+  const tot=resumoFunc(L);
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><div class="section-title">👷 Funcionários</div><div class="section-sub">Diária ${fmt(DIARIA_NORMAL)} · Dia de festa ${fmt(DIARIA_FESTA)} — valores em aberto (desde o último pagamento)</div></div></div>
+  <div class="stats-grid">
+    <div class="stat-card stat-green"><div class="stat-label">Diárias em aberto</div><div class="stat-value">${fmt(tot.ganhos)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Consumo + Vales</div><div class="stat-value">${fmt(tot.consumo+tot.vales)}</div></div>
+    <div class="stat-card"><div class="stat-label">Total a pagar</div><div class="stat-value" style="color:var(--gold2)">${fmt(tot.liquido)}</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">
+    ${FUNCIONARIOS.map(n=>{const r=resumoFunc(L.filter(l=>l.funcionario===n));const nj=n.replace(/'/g,"\\'");return`
+    <div class="stat-card" style="cursor:pointer" onclick="abrirFunc('${nj}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">👤 ${escFunc(n)}</div><span class="badge badge-blue">${r.nDias}d + ${r.nFestas}🎉</span></div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.7">
+        Diárias: <b style="color:var(--green)">${fmt(r.ganhos)}</b><br>
+        Consumo: <b style="color:var(--red)">-${fmt(r.consumo)}</b><br>
+        Vales: <b style="color:var(--red)">-${fmt(r.vales)}</b>
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">${r.liquido<0?'Deve':'A receber'}</span><span style="font-size:18px;font-weight:800;color:${r.liquido<0?'var(--red)':'var(--gold2)'}">${fmt(Math.abs(r.liquido))}</span></div>
+    </div>`;}).join('')}
+  </div>`;
+}
+function abrirFunc(n){funcSel=n;funcVerFechados=false;renderFuncDetalhe(n);}
+function voltarFuncionarios(){funcSel=null;renderFuncionarios();}
+async function renderFuncDetalhe(n){
+  let L=[];
+  try{L=await carregarLancFunc(n,funcVerFechados);}catch(e){alert('Erro ao carregar: '+e.message);return;}
+  const abertos=L.filter(l=>!l.fechado),r=resumoFunc(abertos);window._funcDetalheCache={nome:n,abertos,r};
+  const nj=n.replace(/'/g,"\\'");
+  const icone={consumo:'🍺',vale:'💵',dia:'📅',festa:'🎉'},cor={consumo:'badge-red',vale:'badge-orange',dia:'badge-green',festa:'badge-purple'},rot={consumo:'CONSUMO',vale:'VALE',dia:'DIÁRIA',festa:'FESTA'};
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><button class="btn btn-secondary btn-xs" onclick="voltarFuncionarios()">← Voltar</button> <span class="section-title" style="margin-left:6px">👤 ${escFunc(n)}</span></div>
+    <button class="btn btn-secondary btn-sm" onclick="gerarPDFFunc()">🖨 PDF</button></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+    <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
+    <button class="btn btn-secondary" onclick="pedirSenhaAdm('Lançar vale requer senha ADM',()=>novoValeFunc('${nj}'))">💵 + Vale</button>
+    <button class="btn btn-green" onclick="pedirSenhaAdm('Lançar dia trabalhado requer senha ADM',()=>novoDiaFunc('${nj}'))">📅 + Dia trabalhado</button>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card stat-green"><div class="stat-label">Diárias (${r.nDias} normal + ${r.nFestas} festa)</div><div class="stat-value">${fmt(r.ganhos)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Consumo</div><div class="stat-value">-${fmt(r.consumo)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Vales</div><div class="stat-value">-${fmt(r.vales)}</div></div>
+    <div class="stat-card"><div class="stat-label">${r.liquido<0?'Funcionário deve':'A receber'}</div><div class="stat-value" style="color:${r.liquido<0?'var(--red)':'var(--gold2)'}">${fmt(Math.abs(r.liquido))}</div>
+      ${abertos.length?`<button class="btn btn-green btn-xs" style="margin-top:8px" onclick="pedirSenhaAdm('Fechar pagamento requer senha ADM',()=>fecharPagamentoFunc('${nj}'))">✅ Pagar e zerar</button>`:''}</div>
+  </div>
+  <div class="section-hdr"><div class="section-title">Lançamentos ${funcVerFechados?'(todos)':'em aberto'}</div>
+    <label style="font-size:12px;color:var(--text2);display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${funcVerFechados?'checked':''} onchange="funcVerFechados=this.checked;renderFuncDetalhe('${nj}')"> Mostrar já pagos</label></div>
+  <div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th style="text-align:right">Valor</th><th>Por</th><th></th></tr></thead>
+  <tbody>${L.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhum lançamento</td></tr>`:
+  L.map(l=>{const pos=l.tipo==='dia'||l.tipo==='festa';return`<tr style="${l.fechado?'opacity:0.45':''}">
+    <td>${fmtDateOnly(l.data+'T12:00:00')}</td>
+    <td><span class="badge ${cor[l.tipo]||'badge-blue'}">${icone[l.tipo]||''} ${rot[l.tipo]||l.tipo}</span>${l.fechado?' <span class="badge badge-blue">PAGO</span>':''}</td>
+    <td>${escFunc(l.descricao)}</td>
+    <td style="text-align:right;font-weight:700;color:${pos?'var(--green)':'var(--red)'}">${pos?'+':'-'}${fmt(l.valor)}</td>
+    <td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
+    <td>${l.fechado?'':`<button class="btn btn-danger btn-xs" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button>`}</td>
+  </tr>`;}).join('')}</tbody></table></div>`;
+}
+async function novoConsumoFunc(n){
+  let P=[];try{const{data}=await sb.from('produtos').select('id,nome,emoji,preco,estoque').order('nome');P=data||[];}catch(e){}
+  window._funcProds=P;
+  openModal(`<h3>🍺 Consumo — ${escFunc(n)}</h3>
+  <div class="modal-field"><label>Produto</label><select id="fc-prod" onchange="atualizarValorConsumoFunc()">
+    ${P.map(p=>`<option value="${p.id}">${p.emoji||''} ${escFunc(p.nome)} — ${fmt(p.preco)} (est. ${p.estoque})</option>`).join('')}
+    <option value="outro">✏️ Outro (digitar)</option></select></div>
+  <div class="modal-field" id="fc-desc-wrap" style="display:none"><label>Descrição</label><input type="text" id="fc-desc" placeholder="Ex: Lanche, cigarro..."></div>
+  <div class="modal-field"><label>Quantidade</label><input type="number" id="fc-qty" value="1" min="1" step="1" oninput="atualizarValorConsumoFunc()"></div>
+  <div class="modal-field"><label>Valor total (R$)</label><input type="number" id="fc-valor" step="0.01"></div>
+  <div class="modal-field"><label>Data</label><input type="date" id="fc-data" value="${hojeLocalStr()}"></div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Produto do sistema dá baixa no estoque automaticamente.</div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="fc-btn" onclick="salvarConsumoFunc('${n.replace(/'/g,"\\'")}')">Salvar</button></div>`);
+  atualizarValorConsumoFunc();
+}
+function atualizarValorConsumoFunc(){
+  const sel=document.getElementById('fc-prod').value,qty=parseInt(document.getElementById('fc-qty').value)||1;
+  document.getElementById('fc-desc-wrap').style.display=sel==='outro'?'':'none';
+  if(sel!=='outro'){const p=(window._funcProds||[]).find(x=>String(x.id)===sel);if(p)document.getElementById('fc-valor').value=(Number(p.preco)*qty).toFixed(2);}
+}
+async function salvarConsumoFunc(n){
+  if(window._funcLock)return;
+  const sel=document.getElementById('fc-prod').value,qty=parseInt(document.getElementById('fc-qty').value)||1,valor=parseFloat(document.getElementById('fc-valor').value)||0,data=document.getElementById('fc-data').value||hojeLocalStr();
+  let prodId=null,desc='';
+  if(sel==='outro'){desc=document.getElementById('fc-desc').value.trim();if(!desc){alert('Digite a descrição.');return;}if(qty>1)desc=qty+'x '+desc;}
+  else{const p=(window._funcProds||[]).find(x=>String(x.id)===sel);if(!p)return;prodId=p.id;desc=qty+'x '+p.nome;}
+  if(valor<=0){alert('Informe o valor.');return;}
+  window._funcLock=true;const btn=document.getElementById('fc-btn');if(btn){btn.disabled=true;btn.textContent='Salvando...';}
+  try{
+    const{error}=await sb.from('func_lancamentos').insert({funcionario:n,tipo:'consumo',descricao:desc,qty,valor,prod_id:prodId,data,operador:currentUser.nome,fechado:false});
+    if(error){alert('Erro ao salvar: '+error.message);return;}
+    if(prodId)await descontarEstoqueItem(prodId,qty,'consumo funcionário');
+    registrarLog('Consumo funcionário',`${n}: ${desc} ${fmt(valor)}`);
+    closeModal();renderFuncDetalhe(n);
+  }catch(e){alert('Erro: '+e.message);}
+  finally{window._funcLock=false;if(btn){btn.disabled=false;btn.textContent='Salvar';}}
+}
+function novoValeFunc(n){
+  openModal(`<h3>💵 Vale — ${escFunc(n)}</h3>
+  <div class="modal-field"><label>Valor (R$)</label><input type="number" id="fv-valor" step="0.01" placeholder="0,00"></div>
+  <div class="modal-field"><label>Observação (opcional)</label><input type="text" id="fv-desc" placeholder="Ex: adiantamento"></div>
+  <div class="modal-field"><label>Data</label><input type="date" id="fv-data" value="${hojeLocalStr()}"></div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="fv-btn" onclick="salvarValeFunc('${n.replace(/'/g,"\\'")}')">Salvar</button></div>`);
+  setTimeout(()=>{const el=document.getElementById('fv-valor');if(el)el.focus();},100);
+}
+async function salvarValeFunc(n){
+  if(window._funcLock)return;
+  const valor=parseFloat(document.getElementById('fv-valor').value)||0;if(valor<=0){alert('Informe o valor.');return;}
+  const desc=document.getElementById('fv-desc').value.trim()||'Vale',data=document.getElementById('fv-data').value||hojeLocalStr();
+  window._funcLock=true;const btn=document.getElementById('fv-btn');if(btn){btn.disabled=true;btn.textContent='Salvando...';}
+  try{
+    const{error}=await sb.from('func_lancamentos').insert({funcionario:n,tipo:'vale',descricao:desc,qty:1,valor,data,operador:currentUser.nome,fechado:false});
+    if(error){alert('Erro ao salvar: '+error.message);return;}
+    registrarLog('Vale funcionário',`${n}: ${fmt(valor)}`);
+    closeModal();renderFuncDetalhe(n);
+  }catch(e){alert('Erro: '+e.message);}
+  finally{window._funcLock=false;if(btn){btn.disabled=false;btn.textContent='Salvar';}}
+}
+function novoDiaFunc(n){
+  window._funcTipoDia='dia';
+  openModal(`<h3>📅 Dia trabalhado — ${escFunc(n)}</h3>
+  <div class="modal-field"><label>Tipo</label><div style="display:flex;gap:8px">
+    <button type="button" class="btn btn-primary" id="fd-dia" style="flex:1" onclick="selTipoDiaFunc('dia')">📅 Normal<br><b>${fmt(DIARIA_NORMAL)}</b></button>
+    <button type="button" class="btn btn-secondary" id="fd-festa" style="flex:1" onclick="selTipoDiaFunc('festa')">🎉 Festa<br><b>${fmt(DIARIA_FESTA)}</b></button></div></div>
+  <div class="modal-field"><label>Data</label><input type="date" id="fd-data" value="${hojeLocalStr()}"></div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" id="fd-btn" onclick="salvarDiaFunc('${n.replace(/'/g,"\\'")}')">Salvar</button></div>`);
+}
+function selTipoDiaFunc(t){window._funcTipoDia=t;document.getElementById('fd-dia').className='btn '+(t==='dia'?'btn-primary':'btn-secondary');document.getElementById('fd-festa').className='btn '+(t==='festa'?'btn-primary':'btn-secondary');}
+async function salvarDiaFunc(n){
+  if(window._funcLock)return;
+  const tipo=window._funcTipoDia==='festa'?'festa':'dia',data=document.getElementById('fd-data').value||hojeLocalStr();
+  const valor=tipo==='festa'?DIARIA_FESTA:DIARIA_NORMAL;
+  window._funcLock=true;const btn=document.getElementById('fd-btn');if(btn){btn.disabled=true;btn.textContent='Salvando...';}
+  try{
+    const{data:ja}=await sb.from('func_lancamentos').select('id').eq('funcionario',n).eq('data',data).in('tipo',['dia','festa']);
+    if((ja||[]).length&&!confirm(`${n} já tem dia lançado em ${fmtDateOnly(data+'T12:00:00')}. Lançar mesmo assim?`))return;
+    const{error}=await sb.from('func_lancamentos').insert({funcionario:n,tipo,descricao:tipo==='festa'?'Dia de festa':'Diária',qty:1,valor,data,operador:currentUser.nome,fechado:false});
+    if(error){alert('Erro ao salvar: '+error.message);return;}
+    registrarLog('Dia funcionário',`${n}: ${tipo} ${data}`);
+    closeModal();renderFuncDetalhe(n);
+  }catch(e){alert('Erro: '+e.message);}
+  finally{window._funcLock=false;if(btn){btn.disabled=false;btn.textContent='Salvar';}}
+}
+async function excluirLancFunc(id){
+  try{
+    const{data:l,error:e1}=await sb.from('func_lancamentos').select('*').eq('id',id).single();if(e1)throw e1;
+    const{error}=await sb.from('func_lancamentos').delete().eq('id',id);if(error)throw error;
+    if(l&&l.tipo==='consumo'&&l.prod_id)await devolverEstoqueItem(l.prod_id,l.qty,'estorno consumo funcionário');
+    if(l)registrarLog('Excluiu lançamento funcionário',`${l.funcionario}: ${l.tipo} ${l.descricao} ${fmt(l.valor)}`);
+    renderFuncDetalhe(funcSel);
+  }catch(e){alert('Erro ao excluir: '+e.message);}
+}
+async function fecharPagamentoFunc(n){
+  const c=window._funcDetalheCache;if(!c||c.nome!==n)return;
+  const r=c.r;
+  if(!confirm(`Fechar pagamento de ${n}?\n\nDiárias: ${fmt(r.ganhos)}\nConsumo: -${fmt(r.consumo)}\nVales: -${fmt(r.vales)}\n\n${r.liquido<0?'Funcionário deve':'Pagar'}: ${fmt(Math.abs(r.liquido))}\n\nTudo será marcado como PAGO e o saldo zera.`))return;
+  try{
+    const ids=c.abertos.map(l=>l.id);
+    const{error}=await sb.from('func_lancamentos').update({fechado:true,fechado_em:new Date().toISOString()}).in('id',ids);
+    if(error){alert('Erro ao fechar: '+error.message);return;}
+    registrarLog('Pagamento funcionário',`${n}: ${fmt(r.liquido)}`);
+    renderFuncDetalhe(n);
+  }catch(e){alert('Erro: '+e.message);}
+}
+function gerarPDFFunc(){
+  const c=window._funcDetalheCache;if(!c)return;const r=c.r;
+  const rot={consumo:'Consumo',vale:'Vale',dia:'Diária',festa:'Festa'};
+  const stats=`<div class="stat"><div class="stat-label">Diárias (${r.nDias}+${r.nFestas} festa)</div><div class="stat-value">${fmt(r.ganhos)}</div></div>
+    <div class="stat"><div class="stat-label">Consumo + Vales</div><div class="stat-value">-${fmt(r.consumo+r.vales)}</div></div>
+    <div class="stat"><div class="stat-label">${r.liquido<0?'Deve':'A receber'}</div><div class="stat-value">${fmt(Math.abs(r.liquido))}</div></div>`;
+  const tab=c.abertos.length===0?'<p>Nenhum lançamento em aberto.</p>':`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...c.abertos].reverse().map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${rot[l.tipo]||l.tipo}</td><td>${escFunc(l.descricao)}</td><td>${l.tipo==='dia'||l.tipo==='festa'?'+':'-'}${fmt(l.valor)}</td></tr>`).join('')}</tbody></table>`;
+  abrirJanelaImpressaoCaixa('Extrato do Funcionário',escFunc(c.nome),stats,`<h2>Lançamentos em aberto</h2>${tab}<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
+}
 
 async function renderAnotacoes(){
   const{data:A}=await sb.from('anotacoes').select('*').order('criado_em',{ascending:false});
