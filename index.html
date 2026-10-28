@@ -209,6 +209,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <button class="nav-btn" onclick="goTab('mesas')">🍺 Mesas</button>
     <button class="nav-btn" onclick="goTab('balcao')">🛒 Balcão</button>
     <button class="nav-btn" onclick="goTab('festa')">🎉 Festa</button>
+    <button class="nav-btn adm-only" onclick="goTab('prevfesta')">🎪 Previsão Festa</button>
     <button class="nav-btn adm-only" onclick="goTab('estoque')">📦 Estoque</button>
     <button class="nav-btn adm-only bruno-tab" onclick="goTab('bruno')">👤 Bruno</button>
     <button class="nav-btn adm-only" onclick="goTab('copao')">🥤 Copão</button>
@@ -470,7 +471,7 @@ function goTab(tab){
   const tabs={dashboard:renderDashboard,caixa:renderCaixa,mesas:renderMesas,balcao:renderBalcao,
     estoque:renderEstoque,bruno:renderBruno,produtos:renderProdutos,financeiro:renderFinanceiro,
     compras:renderCompras,cmv:renderCMV,comissoes:renderComissoes,tarefas:renderTarefas,
-    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao,funcionarios:()=>{funcSel=null;renderFuncionarios();},relatoriodia:renderRelatorioDia};
+    anotacoes:renderAnotacoes,relatorios:renderRelatorios,configuracoes:renderConfiguracoes,festa:renderFesta,copao:renderCopao,funcionarios:()=>{funcSel=null;renderFuncionarios();},relatoriodia:renderRelatorioDia,prevfesta:renderPrevFesta};
   if(tabs[tab])tabs[tab]();
 
   const pollMap={
@@ -2854,16 +2855,17 @@ async function renderFuncionarios(){
   if(funcSel)return renderFuncDetalhe(funcSel);
   let L=[];
   try{L=await carregarLancFunc(null,false);}catch(e){document.getElementById('tab-content').innerHTML=`<div class="empty"><div class="empty-icon">⚠️</div><p>Erro ao carregar: ${escFunc(e.message)}<br><span style="font-size:11px">Confira se a tabela <b>func_lancamentos</b> foi criada no Supabase (com RLS desativado).</span></p></div>`;return;}
-  const tot=resumoFunc(L);
+  const tot=resumoFunc(L.filter(l=>!isSocio(l.funcionario)));
+  const socios={};for(const n of FUNCIONARIOS.filter(isSocio)){try{socios[n]=await resumoSocio(n);}catch(e){}}
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><div class="section-title">👷 Funcionários</div><div class="section-sub">Diária ${fmt(DIARIA_NORMAL)} · Dia de festa ${fmt(DIARIA_FESTA)} — valores em aberto (desde o último pagamento)</div></div></div>
   <div class="stats-grid">
-    <div class="stat-card stat-green"><div class="stat-label">Diárias em aberto</div><div class="stat-value">${fmt(tot.ganhos)}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Diárias em aberto (sem sócio)</div><div class="stat-value">${fmt(tot.ganhos)}</div></div>
     <div class="stat-card stat-red"><div class="stat-label">Consumo + Vales</div><div class="stat-value">${fmt(tot.consumo+tot.vales)}</div></div>
     <div class="stat-card"><div class="stat-label">Total a pagar</div><div class="stat-value" style="color:var(--gold2)">${fmt(tot.liquido)}</div></div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">
-    ${FUNCIONARIOS.map(n=>{const r=resumoFunc(L.filter(l=>l.funcionario===n));const nj=n.replace(/'/g,"\\'");return`
+    ${FUNCIONARIOS.map(n=>{if(isSocio(n)&&socios[n])return cardSocioHtml(n,socios[n]);const r=resumoFunc(L.filter(l=>l.funcionario===n));const nj=n.replace(/'/g,"\\'");return`
     <div class="stat-card" style="cursor:pointer" onclick="abrirFunc('${nj}')">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">👤 ${escFunc(n)}</div><span class="badge badge-blue">${r.nDias}d + ${r.nFestas}🎉</span></div>
       <div style="font-size:12px;color:var(--text2);line-height:1.7">
@@ -2878,6 +2880,7 @@ async function renderFuncionarios(){
 function abrirFunc(n){funcSel=n;funcVerFechados=false;renderFuncDetalhe(n);}
 function voltarFuncionarios(){funcSel=null;renderFuncionarios();}
 async function renderFuncDetalhe(n){
+  if(isSocio(n))return renderSocioDetalhe(n);
   let L=[];
   try{L=await carregarLancFunc(n,funcVerFechados);}catch(e){alert('Erro ao carregar: '+e.message);return;}
   const abertos=L.filter(l=>!l.fechado),r=resumoFunc(abertos);window._funcDetalheCache={nome:n,abertos,r};
@@ -3142,6 +3145,212 @@ function gerarPDFRelDia(){
     t('Consumo dos funcionários',['Data','Funcionário','Item','Valor'],c.consumos.map(l=>`<tr><td>${d(l.data)}</td><td>${escFunc(l.funcionario)}</td><td>${escFunc(l.descricao)}</td><td>${fmt(l.valor)}</td></tr>`))+
     t('Dias trabalhados',['Data','Funcionário','Tipo','Valor'],c.dias.map(l=>`<tr><td>${d(l.data)}</td><td>${escFunc(l.funcionario)}</td><td>${l.tipo==='festa'?'Festa':'Normal'}</td><td>${fmt(l.valor)}</td></tr>`));
   abrirJanelaImpressaoCaixa('Relatório Completo',c.periodo,stats,sec);
+}
+
+// 🤝 Sócio (Bruno R): não tem diária — o crédito é o estoque que ele trouxe (aba Bruno) e vai baixando com consumo e vales
+const SOCIOS={'Bruno R':true};
+function isSocio(n){return !!SOCIOS[n];}
+async function resumoSocio(n){
+  const[rE,rP,L]=await Promise.all([sb.from('entradas_bruno').select('*').order('criado_em',{ascending:false}),sb.from('produtos').select('id,nome,emoji,estoque,custo'),carregarLancFunc(n,true)]);
+  if(rE.error)throw rE.error;if(rP.error)throw rP.error;
+  const E=rE.data||[],P=rP.data||[];
+  // Agrupa o que ele trouxe por produto e compara com o estoque REAL de hoje (o que já vendeu sai da conta; entrada nova soma)
+  const g={};E.forEach(e=>{const k=normalizarTexto(e.produto);if(!g[k])g[k]={produto:e.produto,trouxe:0,custo:0};g[k].trouxe+=Number(e.qty)||0;g[k].custo+=Number(e.custo)||0;});
+  const itens=Object.values(g).map(x=>{const p=P.find(pp=>normalizarTexto(pp.nome)===normalizarTexto(x.produto));const est=p?Math.max(0,Number(p.estoque)||0):0;const temAinda=Math.min(x.trouxe,est);const un=x.trouxe>0?x.custo/x.trouxe:0;return{...x,emoji:p?p.emoji:'',prodId:p?p.id:null,estoque:est,temAinda,custoUn:un,valor:temAinda*un};}).sort((a,b)=>b.valor-a.valor);
+  const credito=itens.reduce((s,i)=>s+i.valor,0);
+  // Consumo de produto que é DELE já baixou o estoque (e o crédito) — não desconta de novo
+  const idsDele=new Set(itens.filter(i=>i.prodId).map(i=>i.prodId));
+  const consumos=L.filter(l=>l.tipo==='consumo'),consumoDeleProprio=consumos.filter(l=>l.prod_id&&idsDele.has(l.prod_id));
+  const consumo=consumos.filter(l=>!(l.prod_id&&idsDele.has(l.prod_id))).reduce((s,l)=>s+Number(l.valor),0);
+  const consumoProprio=consumoDeleProprio.reduce((s,l)=>s+Number(l.valor),0);
+  const vales=L.filter(l=>l.tipo==='vale').reduce((s,l)=>s+Number(l.valor),0);
+  return{E,L,itens,idsDele,credito,consumo,consumoProprio,vales,saldo:credito-consumo-vales};
+}
+function cardSocioHtml(n,r){
+  const nj=n.replace(/'/g,"\\'"),pct=r.credito>0?Math.max(0,Math.min(100,r.saldo/r.credito*100)):0;
+  return`<div class="stat-card" style="cursor:pointer;border-color:rgba(142,68,173,0.45)" onclick="abrirFunc('${nj}')">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🤝 ${escFunc(n)}</div><span class="badge badge-purple">SÓCIO</span></div>
+    <div style="font-size:12px;color:var(--text2);line-height:1.7">
+      Estoque dele hoje: <b style="color:#d4a0f0">${fmt(r.credito)}</b><br>
+      Consumo: <b style="color:var(--red)">-${fmt(r.consumo)}</b><br>
+      Vales: <b style="color:var(--red)">-${fmt(r.vales)}</b>
+    </div>
+    <div class="cmv-bar"><div class="cmv-fill" style="width:${pct}%;background:var(--bruno)"></div></div>
+    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">${r.saldo<0?'Passou do crédito':'Saldo restante'}</span><span style="font-size:18px;font-weight:800;color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</span></div>
+  </div>`;
+}
+async function renderSocioDetalhe(n){
+  let r;
+  try{r=await resumoSocio(n);}catch(e){alert('Erro ao carregar: '+e.message);return;}
+  window._funcDetalheCache={nome:n,socio:r};
+  const nj=n.replace(/'/g,"\\'");
+  const icone={consumo:'🍺',vale:'💵'},cor={consumo:'badge-red',vale:'badge-orange'},rot={consumo:'CONSUMO',vale:'VALE'};
+  const L=r.L.filter(l=>l.tipo==='consumo'||l.tipo==='vale');
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><button class="btn btn-secondary btn-xs" onclick="voltarFuncionarios()">← Voltar</button> <span class="section-title" style="margin-left:6px">🤝 ${escFunc(n)} <span class="badge badge-purple">SÓCIO</span></span></div>
+    <button class="btn btn-secondary btn-sm" onclick="gerarPDFSocio()">🖨 PDF</button></div>
+  <div class="alert alert-bruno" style="margin-bottom:14px">🔗 Sem diárias. O crédito é o <b>estoque dele que ainda existe hoje</b>: o que ele trouxe (aba 👤 Bruno) e ainda está no estoque. O que já foi vendido sai da conta, e entrada nova soma sozinha. Vales e consumo de outros produtos baixam o saldo.</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+    <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
+    <button class="btn btn-secondary" onclick="novoValeFunc('${nj}')">💵 + Vale / Retirada</button>
+    ${currentUser&&currentUser.id==='adm'?`<button class="btn btn-bruno" onclick="goTab('bruno');setTimeout(novaEntradaBruno,600)">📦 + Entrada de estoque</button>`:''}
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card" style="border-color:rgba(142,68,173,0.4)"><div class="stat-label">📦 Estoque dele hoje (crédito)</div><div class="stat-value" style="color:#d4a0f0">${fmt(r.credito)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.temAinda,0)} un em ${r.itens.filter(i=>i.temAinda>0).length} produto(s)</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">🍺 Consumo (outros produtos)</div><div class="stat-value">-${fmt(r.consumo)}</div>${r.consumoProprio?`<div class="stat-sub">+ ${fmt(r.consumoProprio)} dos produtos dele (já saiu do estoque)</div>`:''}</div>
+    <div class="stat-card stat-red"><div class="stat-label">💵 Vales / Retiradas</div><div class="stat-value">-${fmt(r.vales)}</div></div>
+    <div class="stat-card"><div class="stat-label">${r.saldo<0?'Passou do crédito':'Saldo restante'}</div><div class="stat-value" style="color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</div></div>
+  </div>
+  <div class="section-hdr"><div class="section-title">Consumo e vales</div></div>
+  <div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th style="text-align:right">Valor</th><th>Por</th><th></th></tr></thead>
+  <tbody>${L.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhum lançamento</td></tr>`:L.map(l=>`<tr>
+    <td>${fmtDateOnly(l.data+'T12:00:00')}</td><td><span class="badge ${cor[l.tipo]}">${icone[l.tipo]} ${rot[l.tipo]}</span></td><td>${escFunc(l.descricao)}</td>
+    <td style="text-align:right;font-weight:700;color:${l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id)?'var(--text3)':'var(--red)'}">${l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id)?'<span title="Produto dele: já baixou do estoque">(estoque)</span> ':'-'}${fmt(l.valor)}</td><td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
+    <td><div style="display:flex;gap:3px"><button class="btn btn-secondary btn-xs" title="Editar" onclick="pedirSenhaAdm('Editar lançamento requer senha ADM',()=>editarLancFunc(${l.id}))">✏</button><button class="btn btn-danger btn-xs" title="Excluir" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button></div></td></tr>`).join('')}</tbody></table></div>
+  <div class="section-hdr" style="margin-top:16px"><div><div class="section-title" style="color:#d4a0f0">📦 Estoque dele hoje</div><div class="section-sub">Atualiza sozinho com o estoque real</div></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Trouxe</th><th>Estoque atual</th><th>Ainda tem</th><th>Custo un.</th><th>Valor</th></tr></thead>
+  <tbody>${r.itens.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma entrada</td></tr>`:r.itens.map(i=>`<tr style="${i.temAinda?'':'opacity:0.45'}"><td>${i.emoji||''} ${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.estoque}</td><td style="color:var(--bruno);font-weight:700">${i.temAinda}</td><td>${fmt(i.custoUn)}</td><td style="color:#d4a0f0;font-weight:600">${fmt(i.valor)}</td></tr>`).join('')}</tbody></table></div>
+  <div style="font-size:11px;color:var(--text3);margin-top:6px">"Ainda tem" = o menor entre o que ele trouxe e o estoque atual do produto. Se a Malte também compra esse produto, considera que o dele é o último a sair.</div>`;
+}
+function gerarPDFSocio(){
+  const c=window._funcDetalheCache;if(!c||!c.socio)return;const r=c.socio;
+  const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
+  const L=r.L.filter(l=>l.tipo==='consumo'||l.tipo==='vale');
+  const t1=`<h2>Consumo e vales</h2>${L.length?`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...L].reverse().map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${l.tipo==='vale'?'Vale':'Consumo'}</td><td>${escFunc(l.descricao)}</td><td>-${fmt(l.valor)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhum lançamento.</p>'}`;
+  const t2=`<h2>Estoque dele hoje</h2>${r.itens.length?`<table><thead><tr><th>Produto</th><th>Trouxe</th><th>Estoque atual</th><th>Ainda tem</th><th>Custo un.</th><th>Valor</th></tr></thead><tbody>${r.itens.map(i=>`<tr><td>${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.estoque}</td><td>${i.temAinda}</td><td>${fmt(i.custoUn)}</td><td>${fmt(i.valor)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhuma entrada.</p>'}`;
+  abrirJanelaImpressaoCaixa('Extrato do Sócio',escFunc(c.nome),st('Estoque dele hoje',fmt(r.credito))+st('Vales + consumo',fmt(r.consumo+r.vales))+st(r.saldo<0?'Passou do crédito':'Saldo restante',fmt(Math.abs(r.saldo))),t1+t2+`<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
+}
+
+// ══════════════════════════════════════════════
+// 🎪 PREVISÃO DE FESTA — gastos × estoque atual → lucro líquido previsto (independente, não mexe em nada)
+// ══════════════════════════════════════════════
+const PF_CATS=[['aluguel','🏠 Aluguel'],['som','🔊 Som / DJ'],['estrutura','⛺ Estrutura'],['diarias','👷 Diárias funcionários'],['ajudantes','🧑‍🔧 Ajudantes extras'],['comida','🍔 Comida'],['divulgacao','📣 Divulgação'],['seguranca','🛡️ Segurança'],['outros','📦 Outros']];
+const pfCatNome=k=>(PF_CATS.find(c=>c[0]===k)||['','📦 Outros'])[1];
+let pfAtual=null,pfLista=[],pfProdutos=[];
+function pfNova(){return{id:null,nome:'Festa '+fmtDateOnly(new Date().toISOString()),gastos:[],config:{pct:70,usarPromo:true,excluidos:[]}};}
+async function renderPrevFesta(){
+  document.getElementById('tab-content').innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  try{await sincronizarEstoqueCopao();}catch(e){}
+  try{
+    const[rP,rL]=await Promise.all([sb.from('produtos').select('*').order('nome'),sb.from('festa_previsao').select('*').order('atualizado_em',{ascending:false})]);
+    if(rP.error)throw rP.error;pfProdutos=rP.data||[];
+    if(rL.error){pfLista=[];window._pfAvisoTabela=rL.error.message;}else{pfLista=rL.data||[];window._pfAvisoTabela='';}
+  }catch(e){document.getElementById('tab-content').innerHTML=`<div class="empty"><p style="color:var(--red)">Erro ao carregar: ${escFunc(e.message)}</p></div>`;return;}
+  if(!pfAtual)pfAtual=pfLista[0]?JSON.parse(JSON.stringify(pfLista[0])):pfNova();
+  else if(pfAtual.id){const f=pfLista.find(x=>x.id===pfAtual.id);if(!f&&!pfAtual._sujo)pfAtual=pfNova();}
+  pfAtual.gastos=pfAtual.gastos||[];pfAtual.config=Object.assign({pct:70,usarPromo:true,excluidos:[]},pfAtual.config||{});
+  desenharPrevFesta();
+}
+function pfCalc(){
+  const cfg=pfAtual.config,pct=Math.max(0,Math.min(100,Number(cfg.pct)||0))/100,exc=new Set((cfg.excluidos||[]).map(String));
+  const itens=pfProdutos.filter(p=>Number(p.estoque)>0).map(p=>{
+    const preco=cfg.usarPromo&&p.em_promo&&Number(p.preco_promo)>0?Number(p.preco_promo):Number(p.preco)||0;
+    const custo=Number(p.custo)||0,inc=!exc.has(String(p.id)),qtd=inc?Math.floor(Number(p.estoque)*pct):0;
+    return{p,preco,custo,estoque:Number(p.estoque),inc,qtd,receita:qtd*preco,cmv:qtd*custo};});
+  const receita=itens.reduce((s,i)=>s+i.receita,0),cmv=itens.reduce((s,i)=>s+i.cmv,0);
+  const receitaTotalEst=itens.filter(i=>i.inc).reduce((s,i)=>s+i.estoque*i.preco,0);
+  const gastos=pfAtual.gastos.reduce((s,g)=>s+(Number(g.valor)||0),0);
+  const porCat={};pfAtual.gastos.forEach(g=>{porCat[g.cat]=(porCat[g.cat]||0)+(Number(g.valor)||0);});
+  const lucroBruto=receita-cmv,liquido=lucroBruto-gastos;
+  const mgBruta=receita>0?lucroBruto/receita:0;
+  const equilibrio=mgBruta>0?gastos/mgBruta:Infinity;
+  const pctEquilibrio=receitaTotalEst>0&&isFinite(equilibrio)?equilibrio/receitaTotalEst*100:Infinity;
+  return{itens,receita,cmv,gastos,porCat,lucroBruto,liquido,mgBruta,mgLiq:receita>0?liquido/receita:0,equilibrio,pctEquilibrio,receitaTotalEst,semCusto:itens.filter(i=>i.inc&&!i.custo).length};
+}
+function desenharPrevFesta(){
+  const c=pfCalc(),cfg=pfAtual.config;window._pfCalc=c;
+  const inp='padding:8px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;';
+  const cor=c.liquido>=0?'var(--green)':'var(--red)';
+  document.getElementById('tab-content').innerHTML=`
+  <div class="section-hdr"><div><div class="section-title">🎪 Previsão de Festa</div><div class="section-sub">Simulação independente: usa o estoque atual e os gastos que tu lançar. Não mexe em estoque, caixa nem vendas.</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" onclick="renderPrevFesta()">🔄 Atualizar estoque</button><button class="btn btn-primary btn-sm" onclick="gerarPDFPrevFesta()">🖨 PDF</button></div></div>
+  ${window._pfAvisoTabela?`<div style="font-size:12px;color:var(--red);margin-bottom:10px">⚠️ Não deu pra carregar as previsões salvas (${escFunc(window._pfAvisoTabela)}). Rode o SQL da tabela <b>festa_previsao</b> no Supabase. Dá pra simular mesmo assim, só não salva.</div>`:''}
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+    <div style="flex:1;min-width:180px"><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Nome da festa</div><input type="text" value="${escFunc(pfAtual.nome)}" oninput="pfAtual.nome=this.value;pfAtual._sujo=true" style="${inp}width:100%"></div>
+    <div><div style="font-size:10px;color:var(--text2);margin-bottom:4px;text-transform:uppercase">Previsões salvas</div><select onchange="pfAbrir(this.value)" style="${inp}min-width:170px"><option value="">${pfAtual.id?'—':'(nova, não salva)'}</option>${pfLista.map(f=>`<option value="${f.id}" ${pfAtual.id===f.id?'selected':''}>${escFunc(f.nome)}</option>`).join('')}</select></div>
+    <button class="btn btn-green" onclick="pfSalvar()">💾 Salvar</button>
+    <button class="btn btn-secondary" onclick="pfAtual=pfNova();desenharPrevFesta()">+ Nova</button>
+    ${pfAtual.id?`<button class="btn btn-danger btn-sm" onclick="pedirSenhaAdm('Excluir previsão',()=>pfExcluir(${pfAtual.id}))">✕</button>`:''}
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card stat-gold"><div class="stat-label">Receita prevista</div><div class="stat-value">${fmt(c.receita)}</div><div class="stat-sub">vendendo ${cfg.pct}% do estoque</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Custo da bebida (CMV)</div><div class="stat-value">${fmt(c.cmv)}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Gastos da festa</div><div class="stat-value">${fmt(c.gastos)}</div></div>
+    <div class="stat-card" style="border-color:${cor}"><div class="stat-label">💰 Lucro líquido previsto</div><div class="stat-value" style="color:${cor}">${fmt(c.liquido)}</div><div class="stat-sub">margem líquida ${(c.mgLiq*100).toFixed(1)}%</div></div>
+  </div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--text2);line-height:1.7">
+    Lucro bruto da bebida: <b style="color:var(--text)">${fmt(c.lucroBruto)}</b> (margem ${(c.mgBruta*100).toFixed(1)}%) − gastos <b style="color:var(--red)">${fmt(c.gastos)}</b> = <b style="color:${cor}">${fmt(c.liquido)}</b><br>
+    ⚖️ <b>Ponto de equilíbrio:</b> ${isFinite(c.equilibrio)?`precisa faturar <b style="color:var(--gold2)">${fmt(c.equilibrio)}</b> só pra pagar os gastos${isFinite(c.pctEquilibrio)?` — <b>${c.pctEquilibrio.toFixed(0)}%</b> do estoque selecionado${c.pctEquilibrio>100?' <span style="color:var(--red)">(o estoque atual NÃO cobre os gastos)</span>':''}`:''}.`:'sem margem na bebida, não dá pra calcular.'}
+    ${c.semCusto?`<br><span style="color:var(--red)">⚠️ ${c.semCusto} produto(s) sem custo cadastrado — o lucro aparece maior do que é.</span>`:''}
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+    <div style="font-size:14px;font-weight:700;margin-bottom:10px">💸 Gastos da festa</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <select id="pf-cat" style="${inp}">${PF_CATS.map(c=>`<option value="${c[0]}">${c[1]}</option>`).join('')}</select>
+      <input type="text" id="pf-desc" placeholder="Descrição (ex: tenda 10x10)" style="${inp}flex:1;min-width:130px">
+      <input type="number" id="pf-valor" placeholder="R$" step="0.01" style="${inp}width:100px" onkeydown="if(event.key==='Enter')pfAddGasto()">
+      <button class="btn btn-primary" onclick="pfAddGasto()">+ Adicionar</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--text2);align-items:center">
+      Atalho diárias: <input type="number" id="pf-ndia" value="5" min="1" style="${inp}width:60px;padding:5px"> pessoas ×
+      <input type="number" id="pf-vdia" value="${DIARIA_FESTA}" step="1" style="${inp}width:80px;padding:5px">
+      <button class="btn btn-secondary btn-xs" onclick="pfAddDiarias()">+ Lançar diárias</button>
+    </div>
+    ${pfAtual.gastos.length===0?'<div style="font-size:12px;color:var(--text3);padding:10px 0">Nenhum gasto lançado ainda.</div>':`
+    <div class="table-wrap" style="margin-bottom:8px"><table><thead><tr><th>Categoria</th><th>Descrição</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>
+    ${pfAtual.gastos.map((g,i)=>`<tr><td>${pfCatNome(g.cat)}</td><td>${escFunc(g.desc)}</td><td style="text-align:right;color:var(--red);font-weight:600">${fmt(g.valor)}</td><td><button class="btn btn-danger btn-xs" onclick="pfRemGasto(${i})">✕</button></td></tr>`).join('')}
+    </tbody></table></div>
+    <div style="font-size:12px;color:var(--text2);line-height:1.8">${Object.entries(c.porCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${pfCatNome(k)}: <b style="color:var(--text)">${fmt(v)}</b> <span style="color:var(--text3)">(${c.gastos>0?(v/c.gastos*100).toFixed(0):0}%)</span>`).join(' · ')}</div>`}
+  </div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div style="font-size:14px;font-weight:700">📦 Estoque atual que vai pra festa</div>
+      <div style="font-size:12px;color:var(--text2);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        Vender <input type="number" value="${cfg.pct}" min="0" max="100" step="5" onchange="pfAtual.config.pct=Number(this.value)||0;pfAtual._sujo=true;desenharPrevFesta()" style="${inp}width:64px;padding:5px">% do estoque
+        <label style="display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" ${cfg.usarPromo?'checked':''} onchange="pfAtual.config.usarPromo=this.checked;pfAtual._sujo=true;desenharPrevFesta()"> usar preço de promo</label></div></div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Desmarque o que não vai ser vendido na festa. Se o estoque mudar, clique em 🔄 Atualizar estoque.</div>
+    <div class="table-wrap" style="max-height:420px;overflow-y:auto"><table><thead><tr><th></th><th>Produto</th><th>Estoque</th><th>Vende</th><th>Preço</th><th>Receita</th><th>Lucro</th></tr></thead><tbody>
+    ${c.itens.length===0?'<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:16px">Nenhum produto com estoque</td></tr>':c.itens.map(i=>`<tr style="${i.inc?'':'opacity:0.4'}"><td><input type="checkbox" ${i.inc?'checked':''} onchange="pfToggleProd(${i.p.id},this.checked)"></td><td>${i.p.emoji||''} ${escFunc(i.p.nome)}${!i.custo?' <span class="badge badge-red">sem custo</span>':''}</td><td>${i.estoque}</td><td style="font-weight:700">${i.qtd}</td><td>${fmt(i.preco)}</td><td style="color:var(--gold2)">${fmt(i.receita)}</td><td style="color:var(--green)">${fmt(i.receita-i.cmv)}</td></tr>`).join('')}
+    </tbody></table></div>
+  </div></div>`;
+}
+function pfAddGasto(){
+  const cat=document.getElementById('pf-cat').value,desc=document.getElementById('pf-desc').value.trim(),valor=parseFloat(document.getElementById('pf-valor').value)||0;
+  if(valor<=0){alert('Informe o valor do gasto.');return;}
+  pfAtual.gastos.push({cat,desc:desc||pfCatNome(cat).replace(/^\S+\s/,''),valor});pfAtual._sujo=true;desenharPrevFesta();
+  setTimeout(()=>{const s=document.getElementById('pf-cat');if(s)s.value=cat;const d=document.getElementById('pf-desc');if(d)d.focus();},50);
+}
+function pfAddDiarias(){
+  const n=parseInt(document.getElementById('pf-ndia').value)||0,v=parseFloat(document.getElementById('pf-vdia').value)||0;if(n<=0||v<=0)return;
+  pfAtual.gastos.push({cat:'diarias',desc:`${n} pessoas × ${fmt(v)}`,valor:n*v});pfAtual._sujo=true;desenharPrevFesta();
+}
+function pfRemGasto(i){pfAtual.gastos.splice(i,1);pfAtual._sujo=true;desenharPrevFesta();}
+function pfToggleProd(id,on){const s=new Set((pfAtual.config.excluidos||[]).map(String));if(on)s.delete(String(id));else s.add(String(id));pfAtual.config.excluidos=[...s];pfAtual._sujo=true;desenharPrevFesta();}
+function pfAbrir(id){if(!id)return;const f=pfLista.find(x=>String(x.id)===String(id));if(!f)return;if(pfAtual._sujo&&!confirm('Tem alterações não salvas nesta previsão. Abrir outra mesmo assim?')){desenharPrevFesta();return;}pfAtual=JSON.parse(JSON.stringify(f));pfAtual.config=Object.assign({pct:70,usarPromo:true,excluidos:[]},pfAtual.config||{});desenharPrevFesta();}
+async function pfSalvar(){
+  const reg={nome:(pfAtual.nome||'').trim()||'Festa',gastos:pfAtual.gastos,config:pfAtual.config,atualizado_em:new Date().toISOString()};
+  try{
+    let res;
+    if(pfAtual.id)res=await sb.from('festa_previsao').update(reg).eq('id',pfAtual.id).select().single();
+    else res=await sb.from('festa_previsao').insert(reg).select().single();
+    if(res.error){alert('Erro ao salvar: '+res.error.message);return;}
+    pfAtual=JSON.parse(JSON.stringify(res.data));
+    const i=pfLista.findIndex(x=>x.id===res.data.id);if(i>=0)pfLista[i]=res.data;else pfLista.unshift(res.data);
+    desenharPrevFesta();
+  }catch(e){alert('Erro: '+e.message);}
+}
+async function pfExcluir(id){
+  try{const{error}=await sb.from('festa_previsao').delete().eq('id',id);if(error){alert('Erro ao excluir: '+error.message);return;}
+    pfLista=pfLista.filter(x=>x.id!==id);pfAtual=pfLista[0]?JSON.parse(JSON.stringify(pfLista[0])):pfNova();desenharPrevFesta();}catch(e){alert('Erro: '+e.message);}
+}
+function gerarPDFPrevFesta(){
+  const c=window._pfCalc||pfCalc(),cfg=pfAtual.config;
+  const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
+  const stats=st('Receita prevista',fmt(c.receita))+st('Custo da bebida',fmt(c.cmv))+st('Lucro bruto',fmt(c.lucroBruto)+` (${(c.mgBruta*100).toFixed(1)}%)`)+st('Gastos da festa',fmt(c.gastos))+st('Lucro líquido previsto',fmt(c.liquido))+st('Margem líquida',(c.mgLiq*100).toFixed(1)+'%')+st('Ponto de equilíbrio',isFinite(c.equilibrio)?fmt(c.equilibrio):'—')+st('% do estoque p/ empatar',isFinite(c.pctEquilibrio)?c.pctEquilibrio.toFixed(0)+'%':'—')+st('Premissa',`vender ${cfg.pct}% do estoque${cfg.usarPromo?' · preço promo':''}`);
+  const gastos=`<h2>Gastos da festa — ${fmt(c.gastos)}</h2>${pfAtual.gastos.length?`<table><thead><tr><th>Categoria</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${pfAtual.gastos.map(g=>`<tr><td>${pfCatNome(g.cat)}</td><td>${escFunc(g.desc)}</td><td>${fmt(g.valor)}</td></tr>`).join('')}</tbody></table><table><thead><tr><th>Categoria</th><th>Total</th><th>% dos gastos</th></tr></thead><tbody>${Object.entries(c.porCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${pfCatNome(k)}</td><td>${fmt(v)}</td><td>${c.gastos>0?(v/c.gastos*100).toFixed(0):0}%</td></tr>`).join('')}</tbody></table>`:'<p>Nenhum gasto lançado.</p>'}`;
+  const est=`<h2>Estoque previsto para venda</h2><table><thead><tr><th>Produto</th><th>Estoque</th><th>Vende</th><th>Preço</th><th>Receita</th><th>Custo</th><th>Lucro</th></tr></thead><tbody>${c.itens.filter(i=>i.inc).map(i=>`<tr><td>${escFunc(i.p.nome)}</td><td>${i.estoque}</td><td>${i.qtd}</td><td>${fmt(i.preco)}</td><td>${fmt(i.receita)}</td><td>${fmt(i.cmv)}</td><td>${fmt(i.receita-i.cmv)}</td></tr>`).join('')}</tbody></table>`;
+  const obs=`<p style="font-size:11px;color:#666">Previsão com base no estoque de ${fmtDateFull(new Date().toISOString())}. Simulação — não altera estoque, caixa ou vendas.${c.semCusto?` ${c.semCusto} produto(s) sem custo cadastrado.`:''}</p>`;
+  abrirJanelaImpressaoCaixa('Previsão de Festa',escFunc(pfAtual.nome),stats,gastos+est+obs);
 }
 
 async function renderAnotacoes(){
