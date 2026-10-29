@@ -2140,7 +2140,13 @@ async function carregarStatsBruno(){
   </div>
   <div class="alert alert-bruno" style="margin-bottom:18px;">
     &#128279; <b>Integração ativa:</b> Toda entrada registrada aqui é somada ao estoque geral da Malte automaticamente.
-  </div>`;
+  </div>
+  <div id="bruno-estoque-atual" style="margin-bottom:18px"></div>`;
+  try{const r=await resumoSocio('Bruno R');const el=document.getElementById('bruno-estoque-atual');if(el)el.innerHTML=`
+    <div style="background:var(--card);border:1px solid rgba(142,68,173,0.35);border-radius:var(--radius);padding:14px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px"><div><div style="font-size:14px;font-weight:700;color:#d4a0f0">📦 Estoque atual do Bruno (só o dele)</div><div style="font-size:11px;color:var(--text2)">Desde ${r.cicloInicio?fmtDateOnly(r.cicloInicio+'T12:00:00'):'—'} · trouxe − consumo dele − parte dele nas vendas</div></div><div style="font-size:16px;font-weight:800;color:#d4a0f0">${r.temTotal} un · ${fmt(r.valorRestante)}</div></div>
+      <div class="table-wrap" style="margin-bottom:0"><table><thead><tr><th>Produto</th><th>Trouxe</th><th>Consumiu</th><th>Vendido dele</th><th>Tem agora</th></tr></thead><tbody>${r.itens.length?r.itens.map(i=>`<tr style="${i.temAinda?'':'opacity:0.5'}"><td>${i.emoji||''} ${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.consumiu||'—'}</td><td>${i.vendido}</td><td style="color:var(--bruno);font-weight:800">${i.temAinda}</td></tr>`).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:14px">Sem estoque do Bruno</td></tr>'}</tbody></table></div>
+    </div>`;}catch(e){}
 }
 
 async function carregarHistoricoBruno(){
@@ -3151,47 +3157,78 @@ function gerarPDFRelDia(){
 // 🤝 Sócio (Bruno R): não tem diária — o crédito é o estoque que ele trouxe (aba Bruno) e vai baixando com consumo e vales
 const SOCIOS={'Bruno R':true};
 function isSocio(n){return !!SOCIOS[n];}
+// 🤝 Estoque do sócio: o que ele trouxe, menos a parte dele nas vendas (proporcional ao estoque dele × o da Malte) e menos o que ele consumiu.
+// Lote novo soma com o que sobrou. Quando o estoque dele zera, a conta recomeça no próximo lote.
+const SOCIO_INICIO_PADRAO='2026-10-28';
 async function resumoSocio(n){
-  const[rE,rP,Lall]=await Promise.all([sb.from('entradas_bruno').select('*').order('criado_em',{ascending:false}),sb.from('produtos').select('*'),carregarLancFunc(n,true)]);
+  const[rE,rP,Lall]=await Promise.all([sb.from('entradas_bruno').select('*').order('criado_em',{ascending:true}),sb.from('produtos').select('*'),carregarLancFunc(n,true)]);
   if(rE.error)throw rE.error;if(rP.error)throw rP.error;
   const Etodas=rE.data||[],P=rP.data||[];
-  // Só o ÚLTIMO lote: as entradas do dia mais recente em que ele trouxe estoque
-  const diaEnt=e=>hojeLocalStr(new Date(e.criado_em));
-  const loteData=Etodas.length?Etodas.map(diaEnt).sort().pop():null;
-  const E=loteData?Etodas.filter(e=>diaEnt(e)===loteData):[];
-  // Consumo e vales contam a partir do dia do lote (o ciclo anterior fica de fora)
-  const L=loteData?Lall.filter(l=>String(l.data)>=loteData):Lall;
+  const dia=ts=>hojeLocalStr(new Date(ts));
+  const datasEnt=[...new Set(Etodas.map(e=>dia(e.criado_em)))].sort();
+  let escolhida=null;try{escolhida=localStorage.getItem('malte_socio_lote_'+n);}catch(e){}
+  const base=escolhida&&datasEnt.includes(escolhida)?escolhida:(datasEnt.find(d=>d>=SOCIO_INICIO_PADRAO)||datasEnt[datasEnt.length-1]||null);
+  const resumoDatas=datasEnt.map(d=>{const es=Etodas.filter(e=>dia(e.criado_em)===d);return{data:d,n:es.length,un:es.reduce((s,e)=>s+(Number(e.qty)||0),0),custo:es.reduce((s,e)=>s+(Number(e.custo)||0),0)};}).reverse();
+  const vazio={E:[],L:[],loteData:base,cicloInicio:base,resumoDatas,itens:[],idsDele:new Set(),investido:0,lucroBruto:0,lucroPrevisto:0,valorBruto:0,valorRestante:0,temTotal:0,credito:0,consumo:0,consumoProprio:0,vales:0,saldo:0};
+  if(!base)return vazio;
   const precoDe=p=>p.em_promo&&Number(p.preco_promo)>0?Number(p.preco_promo):Number(p.preco)||0;
-  const g={};E.forEach(e=>{const k=normalizarTexto(e.produto);if(!g[k])g[k]={produto:e.produto,trouxe:0,custo:0};g[k].trouxe+=Number(e.qty)||0;g[k].custo+=Number(e.custo)||0;});
-  const consumos=L.filter(l=>l.tipo==='consumo');
-  const itens=Object.values(g).map(x=>{
-    const p=P.find(pp=>normalizarTexto(pp.nome)===normalizarTexto(x.produto));
-    const est=p?Math.max(0,Number(p.estoque)||0):0,temAinda=Math.min(x.trouxe,est);
-    const consumiu=p?consumos.filter(l=>l.prod_id===p.id).reduce((s,l)=>s+(Number(l.qty)||0),0):0;
-    const saiu=x.trouxe-temAinda,vendido=Math.max(0,saiu-consumiu);
-    const custoUn=x.trouxe>0?x.custo/x.trouxe:0,preco=p?precoDe(p):0;
-    return{...x,emoji:p?p.emoji:'',prodId:p?p.id:null,estoque:est,temAinda,consumiu:Math.min(consumiu,saiu),vendido,custoUn,preco,lucroUn:preco-custoUn,lucro:vendido*(preco-custoUn),lucroPrevisto:temAinda*(preco-custoUn)};
-  }).sort((a,b)=>b.lucro-a.lucro);
-  const idsDele=new Set(itens.filter(i=>i.prodId).map(i=>i.prodId));
-  const lucroBruto=itens.reduce((s,i)=>s+i.lucro,0);
-  const lucroPrevisto=itens.reduce((s,i)=>s+i.lucroPrevisto,0);
-  const investido=itens.reduce((s,i)=>s+i.custo,0);
-  const consumoProprio=consumos.filter(l=>l.prod_id&&idsDele.has(l.prod_id)).reduce((s,l)=>s+Number(l.valor),0);
-  const consumo=consumos.filter(l=>!(l.prod_id&&idsDele.has(l.prod_id))).reduce((s,l)=>s+Number(l.valor),0);
-  const vales=L.filter(l=>l.tipo==='vale').reduce((s,l)=>s+Number(l.valor),0);
-  return{E,L,loteData,itens,idsDele,investido,lucroBruto,lucroPrevisto,credito:lucroBruto,consumo,consumoProprio,vales,saldo:lucroBruto-consumo-vales};
+  const prodDe=nome=>P.find(pp=>normalizarTexto(pp.nome)===normalizarTexto(nome));
+  // Tudo desde a data base: entradas dele, consumo dele, vendas e compras da Malte
+  const E=Etodas.filter(e=>dia(e.criado_em)>=base).map(e=>({...e,_dia:dia(e.criado_em),_p:prodDe(e.produto)}));
+  const L=Lall.filter(l=>String(l.data)>=base);
+  const consumosDele=L.filter(l=>l.tipo==='consumo'&&l.prod_id).map(l=>({prod:l.prod_id,qty:Number(l.qty)||0,_dia:String(l.data)}));
+  const idx={};P.forEach(p=>{idx[normalizarTexto(p.nome)]=p;});
+  const vendas=[];
+  {const V=await buscarTodosCMV(()=>sb.from('vendas').select('id,criado_em').gte('criado_em',new Date(`${base}T00:00:00`).toISOString()).order('id'));
+   const diaV={};V.forEach(v=>{diaV[v.id]=dia(v.criado_em);});const ids=V.map(v=>v.id);
+   for(let i=0;i<ids.length;i+=200){const{data,error}=await sb.from('venda_itens').select('venda_id,nome,qty').in('venda_id',ids.slice(i,i+200));if(error)throw error;(data||[]).forEach(it=>{const p=acharProdutoCMV(it.nome,P,idx);if(p)vendas.push({prod:p.id,qty:Number(it.qty)||0,_dia:diaV[it.venda_id]});});}}
+  const compras=[];
+  try{const{data:C}=await sb.from('compras').select('produto,qty,status,data_compra').gte('data_compra',new Date(`${base}T00:00:00`).toISOString());(C||[]).filter(c=>c.status==='recebido').forEach(c=>{const p=prodDe(c.produto);if(p)compras.push({prod:p.id,qty:Number(c.qty)||0,_dia:dia(c.data_compra)});});}catch(e){}
+  // Simulação dia a dia, em ordem: entradas (dele e da Malte) → consumo dele → vendas divididas pelos estoques DAQUELE momento
+  const eventos=[];
+  E.forEach(e=>{if(e._p)eventos.push({d:e._dia,o:0,t:'ent',prod:e._p.id,qty:Number(e.qty)||0,custo:Number(e.custo)||0});});
+  compras.forEach(c=>eventos.push({d:c._dia,o:0,t:'malte',prod:c.prod,qty:c.qty}));
+  consumosDele.forEach(c=>eventos.push({d:c._dia,o:1,t:'cons',prod:c.prod,qty:c.qty}));
+  vendas.forEach(v=>eventos.push({d:v._dia,o:2,t:'venda',prod:v.prod,qty:v.qty}));
+  eventos.sort((x,y)=>x.d<y.d?-1:x.d>y.d?1:x.o-y.o);
+  let st={},ciclo=base,teveDele=false;
+  const novo=id=>st[id]||(st[id]={trouxe:0,custo:0,consumiu:0,malte:0,malteIn:0,vendas:0,vendido:0,dele:0});
+  for(const ev of eventos){
+    if(ev.t==='ent'){
+      const totalDele=Object.values(st).reduce((s,x)=>s+x.dele,0);
+      if(teveDele&&totalDele<=0){st={};ciclo=ev.d;} // estoque dele zerou → recomeça neste lote
+      const x=novo(ev.prod);x.trouxe+=ev.qty;x.custo+=ev.custo;x.dele+=ev.qty;teveDele=true;
+    }else if(ev.t==='malte'){const x=novo(ev.prod);x.malte+=ev.qty;x.malteIn+=ev.qty;}
+    else if(ev.t==='cons'){const x=st[ev.prod];if(!x)continue;const q=Math.min(ev.qty,x.dele);x.consumiu+=q;x.dele-=q;}
+    else{const x=st[ev.prod];if(!x)continue;x.vendas+=ev.qty;
+      const tot=x.dele+x.malte;let vd=tot>0?Math.round(ev.qty*x.dele/tot):x.dele>0?ev.qty:0,vm=ev.qty-vd;
+      if(vm>x.malte){vd+=vm-x.malte;vm=x.malte;}vd=Math.min(vd,x.dele);
+      x.dele-=vd;x.malte-=vm;x.vendido+=vd;}
+  }
+  const nomeDe=id=>P.find(pp=>pp.id===Number(id));
+  const itens=Object.entries(st).filter(([,x])=>x.trouxe>0).map(([id,x])=>{const p=nomeDe(id),preco=p?precoDe(p):0,custoUn=x.trouxe>0?x.custo/x.trouxe:0;const tot=x.dele+x.malte;
+    return{produto:p?p.nome:'?',emoji:p?p.emoji:'',prodId:Number(id),trouxe:x.trouxe,custo:x.custo,consumiu:x.consumiu,malte:x.malteIn,parte:tot>0?x.dele/tot:0,vendasTotal:x.vendas,vendido:x.vendido,temAinda:x.dele,custoUn,preco,valorVenda:x.trouxe*preco,valorRestante:x.dele*preco,lucro:x.trouxe*(preco-custoUn)};
+  }).sort((a,b)=>b.valorRestante-a.valorRestante);
+  const Lc=L.filter(l=>String(l.data)>=ciclo);
+  const consumo=Lc.filter(l=>l.tipo==='consumo').reduce((s,l)=>s+Number(l.valor),0);
+  const vales=Lc.filter(l=>l.tipo==='vale').reduce((s,l)=>s+Number(l.valor),0);
+  const valorBruto=itens.reduce((s,i)=>s+i.valorVenda,0),valorRestante=itens.reduce((s,i)=>s+i.valorRestante,0);
+  return{E:E.filter(e=>e._dia>=ciclo),L:Lc,loteData:ciclo,cicloInicio:ciclo,base,resumoDatas,itens,idsDele:new Set(itens.filter(i=>i.prodId).map(i=>i.prodId)),
+    investido:itens.reduce((s,i)=>s+i.custo,0),lucroBruto:itens.reduce((s,i)=>s+i.lucro,0),lucroPrevisto:0,valorBruto,valorRestante,temTotal:itens.reduce((s,i)=>s+i.temAinda,0),
+    vendidoTotal:itens.reduce((s,i)=>s+i.vendido,0),valorVendido:itens.reduce((s,i)=>s+i.vendido*i.preco,0),
+    credito:valorBruto,consumo,consumoProprio:0,vales,saldo:valorBruto-consumo-vales};
 }
 function cardSocioHtml(n,r){
   const nj=n.replace(/'/g,"\\'");
   return`<div class="stat-card" style="cursor:pointer;border-color:rgba(142,68,173,0.45)" onclick="abrirFunc('${nj}')">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🤝 ${escFunc(n)}</div><span class="badge badge-purple">SÓCIO</span></div>
     <div style="font-size:12px;color:var(--text2);line-height:1.7">
-      ${r.loteData?`Lote de ${fmtDateOnly(r.loteData+'T12:00:00')}<br>`:'Sem lote lançado<br>'}
-      Lucro bruto: <b style="color:var(--green)">${fmt(r.lucroBruto)}</b><br>
-      Consumo: <b style="color:var(--red)">-${fmt(r.consumo+r.consumoProprio)}</b>${r.consumoProprio?`<span style="font-size:10px;color:var(--text3)"> (${fmt(r.consumoProprio)} do estoque dele)</span>`:''}<br>
+      Estoque dele: <b style="color:#d4a0f0">${r.temTotal} un</b> <span style="font-size:10px;color:var(--text3)">(${fmt(r.valorRestante)})</span><br>
+      Valor bruto: <b style="color:var(--gold2)">${fmt(r.valorBruto)}</b><br>
+      Desconto consumo: <b style="color:var(--red)">-${fmt(r.consumo)}</b><br>
       Vales: <b style="color:var(--red)">-${fmt(r.vales)}</b>
     </div>
-    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">${r.saldo<0?'Passou do lucro':'Saldo'}</span><span style="font-size:18px;font-weight:800;color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</span></div>
+    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">${r.saldo<0?'Líquido (negativo)':'Valor líquido'}</span><span style="font-size:18px;font-weight:800;color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</span></div>
   </div>`;
 }
 async function renderSocioDetalhe(n){
@@ -3201,41 +3238,46 @@ async function renderSocioDetalhe(n){
   const nj=n.replace(/'/g,"\\'");
   const icone={consumo:'🍺',vale:'💵'},cor={consumo:'badge-red',vale:'badge-orange'},rot={consumo:'CONSUMO',vale:'VALE'};
   const L=r.L.filter(l=>l.tipo==='consumo'||l.tipo==='vale');
-  const lote=r.loteData?fmtDateOnly(r.loteData+'T12:00:00'):'—';
+  const desde=r.cicloInicio?fmtDateOnly(r.cicloInicio+'T12:00:00'):'—';
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><button class="btn btn-secondary btn-xs" onclick="voltarFuncionarios()">← Voltar</button> <span class="section-title" style="margin-left:6px">🤝 ${escFunc(n)} <span class="badge badge-purple">SÓCIO</span></span></div>
     <button class="btn btn-secondary btn-sm" onclick="gerarPDFSocio()">🖨 PDF</button></div>
-  <div class="alert alert-bruno" style="margin-bottom:14px">🔗 Conta só o <b>último lote</b> que ele trouxe (<b>${lote}</b>). O <b>lucro bruto</b> é (preço de venda − custo) × o que já foi vendido desse lote. Vales e consumo de produtos da Malte, lançados a partir de ${lote}, descontam desse lucro. Quando ele lançar um lote novo, a conta recomeça a partir dele.</div>
+  <div class="alert alert-bruno" style="margin-bottom:14px">🔗 Estoque <b>só dele</b>, desde ${desde}: o que ele trouxe − o que ele consumiu − a parte dele nas vendas. Quando a Malte também tem o mesmo produto, cada venda é dividida na proporção do estoque de cada um. Lote novo <b>soma</b> com o que sobrou; se o estoque dele zerar, a conta recomeça no próximo lote.</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
     <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
     <button class="btn btn-secondary" onclick="novoValeFunc('${nj}')">💵 + Vale / Retirada</button>
     ${currentUser&&currentUser.id==='adm'?`<button class="btn btn-bruno" onclick="goTab('bruno');setTimeout(novaEntradaBruno,600)">📦 + Entrada de estoque</button>`:''}
   </div>
   <div class="stats-grid">
-    <div class="stat-card" style="border-color:rgba(142,68,173,0.4)"><div class="stat-label">📦 Investido no lote</div><div class="stat-value" style="color:#d4a0f0">${fmt(r.investido)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.trouxe,0)} un · ainda tem ${r.itens.reduce((s,i)=>s+i.temAinda,0)}</div></div>
-    <div class="stat-card stat-green"><div class="stat-label">💰 Lucro bruto (vendido)</div><div class="stat-value">${fmt(r.lucroBruto)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.vendido,0)} un vendidas · + ${fmt(r.lucroPrevisto)} se vender o resto</div></div>
-    <div class="stat-card stat-red"><div class="stat-label">🍺 Consumo + 💵 Vales</div><div class="stat-value">-${fmt(r.consumo+r.vales)}</div>${r.consumoProprio?`<div class="stat-sub">+ ${fmt(r.consumoProprio)} do estoque dele (não desconta)</div>`:''}</div>
-    <div class="stat-card"><div class="stat-label">${r.saldo<0?'Passou do lucro':'Saldo'}</div><div class="stat-value" style="color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</div></div>
+    <div class="stat-card" style="border-color:rgba(142,68,173,0.4)"><div class="stat-label">📦 Estoque dele agora</div><div class="stat-value" style="color:#d4a0f0">${r.temTotal} un</div><div class="stat-sub">vale ${fmt(r.valorRestante)} · vendeu ${r.vendidoTotal} un (${fmt(r.valorVendido)})</div></div>
+    <div class="stat-card stat-gold"><div class="stat-label">💰 Valor bruto</div><div class="stat-value">${fmt(r.valorBruto)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.trouxe,0)} un trazidas × preço de venda</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">🍺 Desconto do consumo</div><div class="stat-value">-${fmt(r.consumo)}</div>${r.vales?`<div class="stat-sub">+ vales -${fmt(r.vales)}</div>`:''}</div>
+    <div class="stat-card"><div class="stat-label">${r.saldo<0?'Líquido (negativo)':'✅ Valor líquido'}</div><div class="stat-value" style="color:${r.saldo<0?'var(--red)':'var(--green)'}">${fmt(r.saldo)}</div><div class="stat-sub">bruto − consumo${r.vales?' − vales':''} · investido ${fmt(r.investido)}</div></div>
   </div>
-  <div class="section-hdr"><div><div class="section-title" style="color:#d4a0f0">📦 Lote de ${lote}</div><div class="section-sub">Atualiza sozinho com o estoque real</div></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Trouxe</th><th>Ainda tem</th><th>Vendido</th><th>Custo un.</th><th>Preço venda</th><th>Lucro/un</th><th>Lucro bruto</th></tr></thead>
-  <tbody>${r.itens.length===0?`<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:20px">Nenhuma entrada</td></tr>`:r.itens.map(i=>`<tr><td>${i.emoji||''} ${escFunc(i.produto)}</td><td>${i.trouxe}</td><td style="color:var(--bruno);font-weight:700">${i.temAinda}</td><td>${i.vendido}${i.consumiu?` <span style="font-size:10px;color:var(--text3)">(+${i.consumiu} consumo)</span>`:''}</td><td>${fmt(i.custoUn)}</td><td>${fmt(i.preco)}</td><td style="color:${i.lucroUn>=0?'var(--text2)':'var(--red)'}">${fmt(i.lucroUn)}</td><td style="color:var(--green);font-weight:700">${fmt(i.lucro)}</td></tr>`).join('')}</tbody></table></div>
-  <div style="font-size:11px;color:var(--text3);margin:6px 0 16px">"Ainda tem" = o menor entre o que ele trouxe e o estoque atual. Preço de venda = preço atual do produto (o de promoção, se estiver ativa).</div>
-  <div class="section-hdr"><div class="section-title">Consumo e vales desde ${lote}</div></div>
+  <div class="section-hdr"><div><div class="section-title" style="color:#d4a0f0">📦 Estoque do Bruno desde ${desde}</div><div class="section-sub">Atualiza sozinho com vendas e consumo</div></div>
+    ${currentUser&&currentUser.id==='adm'&&r.resumoDatas.length?`<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)">Contar desde
+      <select onchange="trocarLoteSocio('${nj}',this.value)" style="padding:7px;background:var(--bg3);border:1px solid rgba(142,68,173,0.4);border-radius:var(--radius-sm);color:var(--text);font-size:12px">
+        ${r.resumoDatas.map(d=>`<option value="${d.data}" ${d.data===r.base?'selected':''}>${fmtDateOnly(d.data+'T12:00:00')} — ${d.un} un</option>`).join('')}
+      </select></div>`:''}</div>
+  <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Trouxe</th><th>Consumiu</th><th>Vendas do produto</th><th>Parte dele</th><th>Vendido dele</th><th>Tem agora</th><th>Preço</th><th>Valor bruto</th></tr></thead>
+  <tbody>${r.itens.length===0?`<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Nenhuma entrada</td></tr>`:r.itens.map(i=>`<tr style="${i.temAinda?'':'opacity:0.5'}"><td>${i.emoji||''} ${escFunc(i.produto)}</td><td>${i.trouxe}</td><td style="color:${i.consumiu?'var(--red)':'var(--text3)'}">${i.consumiu||'—'}</td><td style="color:var(--text2)">${i.vendasTotal}${i.malte?` <span style="font-size:10px;color:var(--text3)">(Malte comprou ${i.malte})</span>`:''}</td><td>${(i.parte*100).toFixed(0)}%</td><td style="font-weight:700">${i.vendido}</td><td style="color:var(--bruno);font-weight:800">${i.temAinda}</td><td>${fmt(i.preco)}</td><td style="color:var(--gold2);font-weight:700">${fmt(i.valorVenda)}</td></tr>`).join('')}</tbody></table></div>
+  <div style="font-size:11px;color:var(--text3);margin:6px 0 16px">"Parte dele" = estoque dele ÷ (dele + Malte) agora. Cada venda é dividida pelos estoques do dia em que aconteceu. Ex: ele 67 (72 − 5 consumidas) e Malte 72 → 48% de cada venda é dele. Valor bruto = tudo que ele trouxe × preço de venda; valor líquido = bruto − consumo − vales.</div>
+  <div class="section-hdr"><div class="section-title">Consumo e vales desde ${desde}</div></div>
   <div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th style="text-align:right">Valor</th><th>Por</th><th></th></tr></thead>
-  <tbody>${L.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhum lançamento</td></tr>`:L.map(l=>{const proprio=l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id);return`<tr>
+  <tbody>${L.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhum lançamento</td></tr>`:L.map(l=>`<tr>
     <td>${fmtDateOnly(l.data+'T12:00:00')}</td><td><span class="badge ${cor[l.tipo]}">${icone[l.tipo]} ${rot[l.tipo]}</span></td><td>${escFunc(l.descricao)}</td>
-    <td style="text-align:right;font-weight:700;color:${proprio?'var(--text3)':'var(--red)'}">${proprio?'<span title="Produto dele: não desconta">(estoque dele)</span> ':'-'}${fmt(l.valor)}</td><td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
-    <td><div style="display:flex;gap:3px"><button class="btn btn-secondary btn-xs" title="Editar" onclick="pedirSenhaAdm('Editar lançamento requer senha ADM',()=>editarLancFunc(${l.id}))">✏</button><button class="btn btn-danger btn-xs" title="Excluir" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button></div></td></tr>`;}).join('')}</tbody></table></div>`;
+    <td style="text-align:right;font-weight:700;color:var(--red)">-${fmt(l.valor)}</td><td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
+    <td><div style="display:flex;gap:3px"><button class="btn btn-secondary btn-xs" title="Editar" onclick="pedirSenhaAdm('Editar lançamento requer senha ADM',()=>editarLancFunc(${l.id}))">✏</button><button class="btn btn-danger btn-xs" title="Excluir" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button></div></td></tr>`).join('')}</tbody></table></div>`;
 }
+function trocarLoteSocio(n,d){try{localStorage.setItem('malte_socio_lote_'+n,d);}catch(e){}renderSocioDetalhe(n);}
 function gerarPDFSocio(){
   const c=window._funcDetalheCache;if(!c||!c.socio)return;const r=c.socio;
-  const lote=r.loteData?fmtDateOnly(r.loteData+'T12:00:00'):'—';
+  const desde=r.cicloInicio?fmtDateOnly(r.cicloInicio+'T12:00:00'):'—';
   const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
   const L=r.L.filter(l=>l.tipo==='consumo'||l.tipo==='vale');
-  const t1=`<h2>Lote de ${lote}</h2>${r.itens.length?`<table><thead><tr><th>Produto</th><th>Trouxe</th><th>Ainda tem</th><th>Vendido</th><th>Custo un.</th><th>Preço</th><th>Lucro bruto</th></tr></thead><tbody>${r.itens.map(i=>`<tr><td>${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.temAinda}</td><td>${i.vendido}</td><td>${fmt(i.custoUn)}</td><td>${fmt(i.preco)}</td><td>${fmt(i.lucro)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhuma entrada.</p>'}`;
-  const t2=`<h2>Consumo e vales desde ${lote}</h2>${L.length?`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...L].reverse().map(l=>{const proprio=l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id);return`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${l.tipo==='vale'?'Vale':'Consumo'}</td><td>${escFunc(l.descricao)}${proprio?' (estoque dele — não desconta)':''}</td><td>${proprio?'':'-'}${fmt(l.valor)}</td></tr>`;}).join('')}</tbody></table>`:'<p>Nenhum lançamento.</p>'}`;
-  abrirJanelaImpressaoCaixa('Extrato do Sócio',escFunc(c.nome)+' — lote de '+lote,st('Investido no lote',fmt(r.investido))+st('Lucro bruto (vendido)',fmt(r.lucroBruto))+st('Consumo + vales',fmt(r.consumo+r.vales))+st(r.saldo<0?'Passou do lucro':'Saldo',fmt(Math.abs(r.saldo)))+st('Lucro se vender o resto',fmt(r.lucroPrevisto)),t1+t2+`<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
+  const t1=`<h2>Estoque do Bruno desde ${desde}</h2>${r.itens.length?`<table><thead><tr><th>Produto</th><th>Trouxe</th><th>Consumiu</th><th>Vendido dele</th><th>Tem agora</th><th>Preço</th><th>Valor bruto</th></tr></thead><tbody>${r.itens.map(i=>`<tr><td>${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.consumiu}</td><td>${i.vendido}</td><td>${i.temAinda}</td><td>${fmt(i.preco)}</td><td>${fmt(i.valorVenda)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhuma entrada.</p>'}`;
+  const t2=`<h2>Consumo e vales desde ${desde}</h2>${L.length?`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...L].reverse().map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${l.tipo==='vale'?'Vale':'Consumo'}</td><td>${escFunc(l.descricao)}</td><td>-${fmt(l.valor)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhum lançamento.</p>'}`;
+  abrirJanelaImpressaoCaixa('Extrato do Sócio',escFunc(c.nome)+' — desde '+desde,st('Estoque dele agora',`${r.temTotal} un (${fmt(r.valorRestante)})`)+st('Valor bruto',fmt(r.valorBruto))+st('Desconto do consumo',fmt(r.consumo))+st('Vales',fmt(r.vales))+st('Valor líquido',fmt(r.saldo))+st('Investido',fmt(r.investido)),t1+t2+`<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
 }
 
 // ══════════════════════════════════════════════
