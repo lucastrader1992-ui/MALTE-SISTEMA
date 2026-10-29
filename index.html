@@ -3173,7 +3173,7 @@ function cardSocioHtml(n,r){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🤝 ${escFunc(n)}</div><span class="badge badge-purple">SÓCIO</span></div>
     <div style="font-size:12px;color:var(--text2);line-height:1.7">
       Estoque dele hoje: <b style="color:#d4a0f0">${fmt(r.credito)}</b><br>
-      Consumo: <b style="color:var(--red)">-${fmt(r.consumo)}</b><br>
+      Consumo: <b style="color:var(--red)">-${fmt(r.consumo+r.consumoProprio)}</b>${r.consumoProprio?`<span style="font-size:10px;color:var(--text3)"> (${fmt(r.consumoProprio)} do estoque dele)</span>`:''}<br>
       Vales: <b style="color:var(--red)">-${fmt(r.vales)}</b>
     </div>
     <div class="cmv-bar"><div class="cmv-fill" style="width:${pct}%;background:var(--bruno)"></div></div>
