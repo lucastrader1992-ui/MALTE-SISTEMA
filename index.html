@@ -3152,32 +3152,46 @@ function gerarPDFRelDia(){
 const SOCIOS={'Bruno R':true};
 function isSocio(n){return !!SOCIOS[n];}
 async function resumoSocio(n){
-  const[rE,rP,L]=await Promise.all([sb.from('entradas_bruno').select('*').order('criado_em',{ascending:false}),sb.from('produtos').select('id,nome,emoji,estoque,custo'),carregarLancFunc(n,true)]);
+  const[rE,rP,Lall]=await Promise.all([sb.from('entradas_bruno').select('*').order('criado_em',{ascending:false}),sb.from('produtos').select('*'),carregarLancFunc(n,true)]);
   if(rE.error)throw rE.error;if(rP.error)throw rP.error;
-  const E=rE.data||[],P=rP.data||[];
-  // Agrupa o que ele trouxe por produto e compara com o estoque REAL de hoje (o que já vendeu sai da conta; entrada nova soma)
+  const Etodas=rE.data||[],P=rP.data||[];
+  // Só o ÚLTIMO lote: as entradas do dia mais recente em que ele trouxe estoque
+  const diaEnt=e=>hojeLocalStr(new Date(e.criado_em));
+  const loteData=Etodas.length?Etodas.map(diaEnt).sort().pop():null;
+  const E=loteData?Etodas.filter(e=>diaEnt(e)===loteData):[];
+  // Consumo e vales contam a partir do dia do lote (o ciclo anterior fica de fora)
+  const L=loteData?Lall.filter(l=>String(l.data)>=loteData):Lall;
+  const precoDe=p=>p.em_promo&&Number(p.preco_promo)>0?Number(p.preco_promo):Number(p.preco)||0;
   const g={};E.forEach(e=>{const k=normalizarTexto(e.produto);if(!g[k])g[k]={produto:e.produto,trouxe:0,custo:0};g[k].trouxe+=Number(e.qty)||0;g[k].custo+=Number(e.custo)||0;});
-  const itens=Object.values(g).map(x=>{const p=P.find(pp=>normalizarTexto(pp.nome)===normalizarTexto(x.produto));const est=p?Math.max(0,Number(p.estoque)||0):0;const temAinda=Math.min(x.trouxe,est);const un=x.trouxe>0?x.custo/x.trouxe:0;return{...x,emoji:p?p.emoji:'',prodId:p?p.id:null,estoque:est,temAinda,custoUn:un,valor:temAinda*un};}).sort((a,b)=>b.valor-a.valor);
-  const credito=itens.reduce((s,i)=>s+i.valor,0);
-  // Consumo de produto que é DELE já baixou o estoque (e o crédito) — não desconta de novo
+  const consumos=L.filter(l=>l.tipo==='consumo');
+  const itens=Object.values(g).map(x=>{
+    const p=P.find(pp=>normalizarTexto(pp.nome)===normalizarTexto(x.produto));
+    const est=p?Math.max(0,Number(p.estoque)||0):0,temAinda=Math.min(x.trouxe,est);
+    const consumiu=p?consumos.filter(l=>l.prod_id===p.id).reduce((s,l)=>s+(Number(l.qty)||0),0):0;
+    const saiu=x.trouxe-temAinda,vendido=Math.max(0,saiu-consumiu);
+    const custoUn=x.trouxe>0?x.custo/x.trouxe:0,preco=p?precoDe(p):0;
+    return{...x,emoji:p?p.emoji:'',prodId:p?p.id:null,estoque:est,temAinda,consumiu:Math.min(consumiu,saiu),vendido,custoUn,preco,lucroUn:preco-custoUn,lucro:vendido*(preco-custoUn),lucroPrevisto:temAinda*(preco-custoUn)};
+  }).sort((a,b)=>b.lucro-a.lucro);
   const idsDele=new Set(itens.filter(i=>i.prodId).map(i=>i.prodId));
-  const consumos=L.filter(l=>l.tipo==='consumo'),consumoDeleProprio=consumos.filter(l=>l.prod_id&&idsDele.has(l.prod_id));
+  const lucroBruto=itens.reduce((s,i)=>s+i.lucro,0);
+  const lucroPrevisto=itens.reduce((s,i)=>s+i.lucroPrevisto,0);
+  const investido=itens.reduce((s,i)=>s+i.custo,0);
+  const consumoProprio=consumos.filter(l=>l.prod_id&&idsDele.has(l.prod_id)).reduce((s,l)=>s+Number(l.valor),0);
   const consumo=consumos.filter(l=>!(l.prod_id&&idsDele.has(l.prod_id))).reduce((s,l)=>s+Number(l.valor),0);
-  const consumoProprio=consumoDeleProprio.reduce((s,l)=>s+Number(l.valor),0);
   const vales=L.filter(l=>l.tipo==='vale').reduce((s,l)=>s+Number(l.valor),0);
-  return{E,L,itens,idsDele,credito,consumo,consumoProprio,vales,saldo:credito-consumo-vales};
+  return{E,L,loteData,itens,idsDele,investido,lucroBruto,lucroPrevisto,credito:lucroBruto,consumo,consumoProprio,vales,saldo:lucroBruto-consumo-vales};
 }
 function cardSocioHtml(n,r){
-  const nj=n.replace(/'/g,"\\'"),pct=r.credito>0?Math.max(0,Math.min(100,r.saldo/r.credito*100)):0;
+  const nj=n.replace(/'/g,"\\'");
   return`<div class="stat-card" style="cursor:pointer;border-color:rgba(142,68,173,0.45)" onclick="abrirFunc('${nj}')">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🤝 ${escFunc(n)}</div><span class="badge badge-purple">SÓCIO</span></div>
     <div style="font-size:12px;color:var(--text2);line-height:1.7">
-      Estoque dele hoje: <b style="color:#d4a0f0">${fmt(r.credito)}</b><br>
+      ${r.loteData?`Lote de ${fmtDateOnly(r.loteData+'T12:00:00')}<br>`:'Sem lote lançado<br>'}
+      Lucro bruto: <b style="color:var(--green)">${fmt(r.lucroBruto)}</b><br>
       Consumo: <b style="color:var(--red)">-${fmt(r.consumo+r.consumoProprio)}</b>${r.consumoProprio?`<span style="font-size:10px;color:var(--text3)"> (${fmt(r.consumoProprio)} do estoque dele)</span>`:''}<br>
       Vales: <b style="color:var(--red)">-${fmt(r.vales)}</b>
     </div>
-    <div class="cmv-bar"><div class="cmv-fill" style="width:${pct}%;background:var(--bruno)"></div></div>
-    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">${r.saldo<0?'Passou do crédito':'Saldo restante'}</span><span style="font-size:18px;font-weight:800;color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</span></div>
+    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">${r.saldo<0?'Passou do lucro':'Saldo'}</span><span style="font-size:18px;font-weight:800;color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</span></div>
   </div>`;
 }
 async function renderSocioDetalhe(n){
@@ -3187,39 +3201,41 @@ async function renderSocioDetalhe(n){
   const nj=n.replace(/'/g,"\\'");
   const icone={consumo:'🍺',vale:'💵'},cor={consumo:'badge-red',vale:'badge-orange'},rot={consumo:'CONSUMO',vale:'VALE'};
   const L=r.L.filter(l=>l.tipo==='consumo'||l.tipo==='vale');
+  const lote=r.loteData?fmtDateOnly(r.loteData+'T12:00:00'):'—';
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><button class="btn btn-secondary btn-xs" onclick="voltarFuncionarios()">← Voltar</button> <span class="section-title" style="margin-left:6px">🤝 ${escFunc(n)} <span class="badge badge-purple">SÓCIO</span></span></div>
     <button class="btn btn-secondary btn-sm" onclick="gerarPDFSocio()">🖨 PDF</button></div>
-  <div class="alert alert-bruno" style="margin-bottom:14px">🔗 Sem diárias. O crédito é o <b>estoque dele que ainda existe hoje</b>: o que ele trouxe (aba 👤 Bruno) e ainda está no estoque. O que já foi vendido sai da conta, e entrada nova soma sozinha. Vales e consumo de outros produtos baixam o saldo.</div>
+  <div class="alert alert-bruno" style="margin-bottom:14px">🔗 Conta só o <b>último lote</b> que ele trouxe (<b>${lote}</b>). O <b>lucro bruto</b> é (preço de venda − custo) × o que já foi vendido desse lote. Vales e consumo de produtos da Malte, lançados a partir de ${lote}, descontam desse lucro. Quando ele lançar um lote novo, a conta recomeça a partir dele.</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
     <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
     <button class="btn btn-secondary" onclick="novoValeFunc('${nj}')">💵 + Vale / Retirada</button>
     ${currentUser&&currentUser.id==='adm'?`<button class="btn btn-bruno" onclick="goTab('bruno');setTimeout(novaEntradaBruno,600)">📦 + Entrada de estoque</button>`:''}
   </div>
   <div class="stats-grid">
-    <div class="stat-card" style="border-color:rgba(142,68,173,0.4)"><div class="stat-label">📦 Estoque dele hoje (crédito)</div><div class="stat-value" style="color:#d4a0f0">${fmt(r.credito)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.temAinda,0)} un em ${r.itens.filter(i=>i.temAinda>0).length} produto(s)</div></div>
-    <div class="stat-card stat-red"><div class="stat-label">🍺 Consumo (outros produtos)</div><div class="stat-value">-${fmt(r.consumo)}</div>${r.consumoProprio?`<div class="stat-sub">+ ${fmt(r.consumoProprio)} dos produtos dele (já saiu do estoque)</div>`:''}</div>
-    <div class="stat-card stat-red"><div class="stat-label">💵 Vales / Retiradas</div><div class="stat-value">-${fmt(r.vales)}</div></div>
-    <div class="stat-card"><div class="stat-label">${r.saldo<0?'Passou do crédito':'Saldo restante'}</div><div class="stat-value" style="color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</div></div>
+    <div class="stat-card" style="border-color:rgba(142,68,173,0.4)"><div class="stat-label">📦 Investido no lote</div><div class="stat-value" style="color:#d4a0f0">${fmt(r.investido)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.trouxe,0)} un · ainda tem ${r.itens.reduce((s,i)=>s+i.temAinda,0)}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">💰 Lucro bruto (vendido)</div><div class="stat-value">${fmt(r.lucroBruto)}</div><div class="stat-sub">${r.itens.reduce((s,i)=>s+i.vendido,0)} un vendidas · + ${fmt(r.lucroPrevisto)} se vender o resto</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">🍺 Consumo + 💵 Vales</div><div class="stat-value">-${fmt(r.consumo+r.vales)}</div>${r.consumoProprio?`<div class="stat-sub">+ ${fmt(r.consumoProprio)} do estoque dele (não desconta)</div>`:''}</div>
+    <div class="stat-card"><div class="stat-label">${r.saldo<0?'Passou do lucro':'Saldo'}</div><div class="stat-value" style="color:${r.saldo<0?'var(--red)':'#d4a0f0'}">${fmt(Math.abs(r.saldo))}</div></div>
   </div>
-  <div class="section-hdr"><div class="section-title">Consumo e vales</div></div>
+  <div class="section-hdr"><div><div class="section-title" style="color:#d4a0f0">📦 Lote de ${lote}</div><div class="section-sub">Atualiza sozinho com o estoque real</div></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Trouxe</th><th>Ainda tem</th><th>Vendido</th><th>Custo un.</th><th>Preço venda</th><th>Lucro/un</th><th>Lucro bruto</th></tr></thead>
+  <tbody>${r.itens.length===0?`<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:20px">Nenhuma entrada</td></tr>`:r.itens.map(i=>`<tr><td>${i.emoji||''} ${escFunc(i.produto)}</td><td>${i.trouxe}</td><td style="color:var(--bruno);font-weight:700">${i.temAinda}</td><td>${i.vendido}${i.consumiu?` <span style="font-size:10px;color:var(--text3)">(+${i.consumiu} consumo)</span>`:''}</td><td>${fmt(i.custoUn)}</td><td>${fmt(i.preco)}</td><td style="color:${i.lucroUn>=0?'var(--text2)':'var(--red)'}">${fmt(i.lucroUn)}</td><td style="color:var(--green);font-weight:700">${fmt(i.lucro)}</td></tr>`).join('')}</tbody></table></div>
+  <div style="font-size:11px;color:var(--text3);margin:6px 0 16px">"Ainda tem" = o menor entre o que ele trouxe e o estoque atual. Preço de venda = preço atual do produto (o de promoção, se estiver ativa).</div>
+  <div class="section-hdr"><div class="section-title">Consumo e vales desde ${lote}</div></div>
   <div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th style="text-align:right">Valor</th><th>Por</th><th></th></tr></thead>
-  <tbody>${L.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhum lançamento</td></tr>`:L.map(l=>`<tr>
+  <tbody>${L.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhum lançamento</td></tr>`:L.map(l=>{const proprio=l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id);return`<tr>
     <td>${fmtDateOnly(l.data+'T12:00:00')}</td><td><span class="badge ${cor[l.tipo]}">${icone[l.tipo]} ${rot[l.tipo]}</span></td><td>${escFunc(l.descricao)}</td>
-    <td style="text-align:right;font-weight:700;color:${l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id)?'var(--text3)':'var(--red)'}">${l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id)?'<span title="Produto dele: já baixou do estoque">(estoque)</span> ':'-'}${fmt(l.valor)}</td><td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
-    <td><div style="display:flex;gap:3px"><button class="btn btn-secondary btn-xs" title="Editar" onclick="pedirSenhaAdm('Editar lançamento requer senha ADM',()=>editarLancFunc(${l.id}))">✏</button><button class="btn btn-danger btn-xs" title="Excluir" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button></div></td></tr>`).join('')}</tbody></table></div>
-  <div class="section-hdr" style="margin-top:16px"><div><div class="section-title" style="color:#d4a0f0">📦 Estoque dele hoje</div><div class="section-sub">Atualiza sozinho com o estoque real</div></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Trouxe</th><th>Estoque atual</th><th>Ainda tem</th><th>Custo un.</th><th>Valor</th></tr></thead>
-  <tbody>${r.itens.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Nenhuma entrada</td></tr>`:r.itens.map(i=>`<tr style="${i.temAinda?'':'opacity:0.45'}"><td>${i.emoji||''} ${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.estoque}</td><td style="color:var(--bruno);font-weight:700">${i.temAinda}</td><td>${fmt(i.custoUn)}</td><td style="color:#d4a0f0;font-weight:600">${fmt(i.valor)}</td></tr>`).join('')}</tbody></table></div>
-  <div style="font-size:11px;color:var(--text3);margin-top:6px">"Ainda tem" = o menor entre o que ele trouxe e o estoque atual do produto. Se a Malte também compra esse produto, considera que o dele é o último a sair.</div>`;
+    <td style="text-align:right;font-weight:700;color:${proprio?'var(--text3)':'var(--red)'}">${proprio?'<span title="Produto dele: não desconta">(estoque dele)</span> ':'-'}${fmt(l.valor)}</td><td style="font-size:11px;color:var(--text3)">${escFunc(l.operador)}</td>
+    <td><div style="display:flex;gap:3px"><button class="btn btn-secondary btn-xs" title="Editar" onclick="pedirSenhaAdm('Editar lançamento requer senha ADM',()=>editarLancFunc(${l.id}))">✏</button><button class="btn btn-danger btn-xs" title="Excluir" onclick="pedirSenhaAdm('Excluir lançamento requer senha ADM',()=>excluirLancFunc(${l.id}))">✕</button></div></td></tr>`;}).join('')}</tbody></table></div>`;
 }
 function gerarPDFSocio(){
   const c=window._funcDetalheCache;if(!c||!c.socio)return;const r=c.socio;
+  const lote=r.loteData?fmtDateOnly(r.loteData+'T12:00:00'):'—';
   const st=(l,v)=>`<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`;
   const L=r.L.filter(l=>l.tipo==='consumo'||l.tipo==='vale');
-  const t1=`<h2>Consumo e vales</h2>${L.length?`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...L].reverse().map(l=>`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${l.tipo==='vale'?'Vale':'Consumo'}</td><td>${escFunc(l.descricao)}</td><td>-${fmt(l.valor)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhum lançamento.</p>'}`;
-  const t2=`<h2>Estoque dele hoje</h2>${r.itens.length?`<table><thead><tr><th>Produto</th><th>Trouxe</th><th>Estoque atual</th><th>Ainda tem</th><th>Custo un.</th><th>Valor</th></tr></thead><tbody>${r.itens.map(i=>`<tr><td>${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.estoque}</td><td>${i.temAinda}</td><td>${fmt(i.custoUn)}</td><td>${fmt(i.valor)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhuma entrada.</p>'}`;
-  abrirJanelaImpressaoCaixa('Extrato do Sócio',escFunc(c.nome),st('Estoque dele hoje',fmt(r.credito))+st('Vales + consumo',fmt(r.consumo+r.vales))+st(r.saldo<0?'Passou do crédito':'Saldo restante',fmt(Math.abs(r.saldo))),t1+t2+`<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
+  const t1=`<h2>Lote de ${lote}</h2>${r.itens.length?`<table><thead><tr><th>Produto</th><th>Trouxe</th><th>Ainda tem</th><th>Vendido</th><th>Custo un.</th><th>Preço</th><th>Lucro bruto</th></tr></thead><tbody>${r.itens.map(i=>`<tr><td>${escFunc(i.produto)}</td><td>${i.trouxe}</td><td>${i.temAinda}</td><td>${i.vendido}</td><td>${fmt(i.custoUn)}</td><td>${fmt(i.preco)}</td><td>${fmt(i.lucro)}</td></tr>`).join('')}</tbody></table>`:'<p>Nenhuma entrada.</p>'}`;
+  const t2=`<h2>Consumo e vales desde ${lote}</h2>${L.length?`<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>${[...L].reverse().map(l=>{const proprio=l.tipo==='consumo'&&l.prod_id&&r.idsDele.has(l.prod_id);return`<tr><td>${fmtDateOnly(l.data+'T12:00:00')}</td><td>${l.tipo==='vale'?'Vale':'Consumo'}</td><td>${escFunc(l.descricao)}${proprio?' (estoque dele — não desconta)':''}</td><td>${proprio?'':'-'}${fmt(l.valor)}</td></tr>`;}).join('')}</tbody></table>`:'<p>Nenhum lançamento.</p>'}`;
+  abrirJanelaImpressaoCaixa('Extrato do Sócio',escFunc(c.nome)+' — lote de '+lote,st('Investido no lote',fmt(r.investido))+st('Lucro bruto (vendido)',fmt(r.lucroBruto))+st('Consumo + vales',fmt(r.consumo+r.vales))+st(r.saldo<0?'Passou do lucro':'Saldo',fmt(Math.abs(r.saldo)))+st('Lucro se vender o resto',fmt(r.lucroPrevisto)),t1+t2+`<p style="margin-top:40px;font-size:12px">_______________________________<br>Assinatura — ${escFunc(c.nome)}</p>`);
 }
 
 // ══════════════════════════════════════════════
