@@ -1082,11 +1082,11 @@ window._funcMesaMap={};
 function mapearMesasFunc(M){const ids=(M||[]).map(m=>m.id).sort((a,b)=>a-b);const ult=ids.slice(-FUNCIONARIOS.length);const mp={};ult.forEach((id,i)=>{mp[id]=FUNCIONARIOS[i];});window._funcMesaMap=mp;}
 async function garantirMapaMesasFunc(){if(Object.keys(window._funcMesaMap||{}).length)return;try{const{data}=await sb.from('mesas').select('id');mapearMesasFunc(data);}catch(e){}}
 function funcDaMesa(id){return (window._funcMesaMap||{})[id]||null;}
-function nomeMesa(id){const f=funcDaMesa(id);return f?'👷 '+f:'Mesa '+id;}
+function nomeMesa(id){const f=funcDaMesa(id);return f?(isDono(f)?'👑 '+f+' (CEO)':'👷 '+f):'Mesa '+id;}
 function cardMesaHtml(m,tot){const f=funcDaMesa(m.id),oc=m.status==='ocupada',cor=oc?'var(--red)':'var(--green)';
   return`<div class="mesa-card ${m.status}" onclick="abrirMesa(${m.id})" style="${f?'border-style:dashed;'+(oc?'':'border-color:rgba(176,110,212,0.5);'):''}">
-  ${f?`<div class="mesa-num" style="color:${oc?'var(--red)':'#b06ed4'};font-size:17px;line-height:1.2;padding:4px 0">👷 ${escFunc(f)}</div>`:`<div class="mesa-num" style="color:${cor}">${m.id}</div>`}
-  <div class="mesa-status" style="color:${cor}">${oc?'Ocupada':(f?'Funcionário':'Livre')}</div>${oc&&tot[m.id]?`<div class="mesa-total">${fmt(tot[m.id])}</div>`:''}</div>`;}
+  ${f?`<div class="mesa-num" style="color:${oc?'var(--red)':isDono(f)?'var(--gold2)':'#b06ed4'};font-size:17px;line-height:1.2;padding:4px 0">${isDono(f)?'👑':'👷'} ${escFunc(f)}</div>`:`<div class="mesa-num" style="color:${cor}">${m.id}</div>`}
+  <div class="mesa-status" style="color:${cor}">${oc?'Ocupada':(f?(isDono(f)?'CEO':'Funcionário'):'Livre')}</div>${oc&&tot[m.id]?`<div class="mesa-total">${fmt(tot[m.id])}</div>`:''}</div>`;}
 async function lancarMesaNoFuncionario(id){
   if(window._fechandoMesa)return;const nome=funcDaMesa(id);if(!nome)return;
   window._fechandoMesa=true;
@@ -2840,7 +2840,13 @@ async function deletarTarefa(id){try{const{error}=await sb.from('tarefas').delet
 // ══════════════════════════════════════════════
 // 👷 FUNCIONÁRIOS — consumo, vales e diárias
 // ══════════════════════════════════════════════
-const FUNCIONARIOS=['Luigi','Idalina','Bruno R','Bruno C','Vitória'];
+const FUNCIONARIOS=['Lucas','Luigi','Idalina','Bruno R','Bruno C','Vitória']; // Lucas primeiro: os outros continuam nas mesmas mesas
+const DONOS={'Lucas':true};
+function isDono(n){return !!DONOS[n];}
+function cardDonoHtml(n,r){const nj=n.replace(/'/g,"\\'");return`<div class="stat-card" style="cursor:pointer;border-color:rgba(212,160,23,0.5)" onclick="abrirFunc('${nj}')">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">👑 ${escFunc(n)}</div><span class="badge badge-gold">CEO</span></div>
+  <div style="font-size:12px;color:var(--text2);line-height:1.7">Consumo: <b style="color:var(--red)">-${fmt(r.consumo)}</b><br>Vales: <b style="color:var(--red)">-${fmt(r.vales)}</b></div>
+  <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text3);text-transform:uppercase">Total retirado</span><span style="font-size:18px;font-weight:800;color:var(--gold2)">${fmt(r.consumo+r.vales)}</span></div></div>`;}
 const DIARIA_NORMAL=55,DIARIA_FESTA=110;
 let funcSel=null,funcVerFechados=false;
 function escFunc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -2861,17 +2867,17 @@ async function renderFuncionarios(){
   if(funcSel)return renderFuncDetalhe(funcSel);
   let L=[];
   try{L=await carregarLancFunc(null,false);}catch(e){document.getElementById('tab-content').innerHTML=`<div class="empty"><div class="empty-icon">⚠️</div><p>Erro ao carregar: ${escFunc(e.message)}<br><span style="font-size:11px">Confira se a tabela <b>func_lancamentos</b> foi criada no Supabase (com RLS desativado).</span></p></div>`;return;}
-  const tot=resumoFunc(L.filter(l=>!isSocio(l.funcionario)));
+  const tot=resumoFunc(L.filter(l=>!isSocio(l.funcionario)&&!isDono(l.funcionario)));
   const socios={};for(const n of FUNCIONARIOS.filter(isSocio)){try{socios[n]=await resumoSocio(n);}catch(e){}}
   document.getElementById('tab-content').innerHTML=`
   <div class="section-hdr"><div><div class="section-title">👷 Funcionários</div><div class="section-sub">Diária ${fmt(DIARIA_NORMAL)} · Dia de festa ${fmt(DIARIA_FESTA)} — valores em aberto (desde o último pagamento)</div></div></div>
   <div class="stats-grid">
-    <div class="stat-card stat-green"><div class="stat-label">Diárias em aberto (sem sócio)</div><div class="stat-value">${fmt(tot.ganhos)}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Diárias em aberto (sem sócio/dono)</div><div class="stat-value">${fmt(tot.ganhos)}</div></div>
     <div class="stat-card stat-red"><div class="stat-label">Consumo + Vales</div><div class="stat-value">${fmt(tot.consumo+tot.vales)}</div></div>
     <div class="stat-card"><div class="stat-label">Total a pagar</div><div class="stat-value" style="color:var(--gold2)">${fmt(tot.liquido)}</div></div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">
-    ${FUNCIONARIOS.map(n=>{if(isSocio(n)&&socios[n])return cardSocioHtml(n,socios[n]);const r=resumoFunc(L.filter(l=>l.funcionario===n));const nj=n.replace(/'/g,"\\'");return`
+    ${FUNCIONARIOS.map(n=>{if(isSocio(n)&&socios[n])return cardSocioHtml(n,socios[n]);if(isDono(n))return cardDonoHtml(n,resumoFunc(L.filter(l=>l.funcionario===n)));const r=resumoFunc(L.filter(l=>l.funcionario===n));const nj=n.replace(/'/g,"\\'");return`
     <div class="stat-card" style="cursor:pointer" onclick="abrirFunc('${nj}')">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">👤 ${escFunc(n)}</div><span class="badge badge-blue">${r.nDias}d + ${r.nFestas}🎉</span></div>
       <div style="font-size:12px;color:var(--text2);line-height:1.7">
@@ -2893,19 +2899,19 @@ async function renderFuncDetalhe(n){
   const nj=n.replace(/'/g,"\\'");
   const icone={consumo:'🍺',vale:'💵',dia:'📅',festa:'🎉'},cor={consumo:'badge-red',vale:'badge-orange',dia:'badge-green',festa:'badge-purple'},rot={consumo:'CONSUMO',vale:'VALE',dia:'DIÁRIA',festa:'FESTA'};
   document.getElementById('tab-content').innerHTML=`
-  <div class="section-hdr"><div><button class="btn btn-secondary btn-xs" onclick="voltarFuncionarios()">← Voltar</button> <span class="section-title" style="margin-left:6px">👤 ${escFunc(n)}</span></div>
+  <div class="section-hdr"><div><button class="btn btn-secondary btn-xs" onclick="voltarFuncionarios()">← Voltar</button> <span class="section-title" style="margin-left:6px">${isDono(n)?'👑':'👤'} ${escFunc(n)}${isDono(n)?' <span class="badge badge-gold">CEO</span>':''}</span></div>
     <button class="btn btn-secondary btn-sm" onclick="gerarPDFFunc()">🖨 PDF</button></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
     <button class="btn btn-primary" onclick="novoConsumoFunc('${nj}')">🍺 + Consumo</button>
     <button class="btn btn-secondary" onclick="novoValeFunc('${nj}')">💵 + Vale</button>
-    ${currentUser&&currentUser.id==='adm'?`<button class="btn btn-green" onclick="novoDiaFunc('${nj}')">📅 + Dia trabalhado</button>`:''}
+    ${currentUser&&currentUser.id==='adm'&&!isDono(n)?`<button class="btn btn-green" onclick="novoDiaFunc('${nj}')">📅 + Dia trabalhado</button>`:''}
   </div>
   <div class="stats-grid">
-    <div class="stat-card stat-green"><div class="stat-label">Diárias (${r.nDias} normal + ${r.nFestas} festa)</div><div class="stat-value">${fmt(r.ganhos)}</div></div>
+    ${isDono(n)?'':`<div class="stat-card stat-green"><div class="stat-label">Diárias (${r.nDias} normal + ${r.nFestas} festa)</div><div class="stat-value">${fmt(r.ganhos)}</div></div>`}
     <div class="stat-card stat-red"><div class="stat-label">Consumo</div><div class="stat-value">-${fmt(r.consumo)}</div></div>
     <div class="stat-card stat-red"><div class="stat-label">Vales</div><div class="stat-value">-${fmt(r.vales)}</div></div>
-    <div class="stat-card"><div class="stat-label">${r.liquido<0?'Funcionário deve':'A receber'}</div><div class="stat-value" style="color:${r.liquido<0?'var(--red)':'var(--gold2)'}">${fmt(Math.abs(r.liquido))}</div>
-      ${abertos.length?`<button class="btn btn-green btn-xs" style="margin-top:8px" onclick="pedirSenhaAdm('Fechar pagamento requer senha ADM',()=>fecharPagamentoFunc('${nj}'))">✅ Pagar e zerar</button>`:''}</div>
+    <div class="stat-card"><div class="stat-label">${isDono(n)?'Total retirado':r.liquido<0?'Funcionário deve':'A receber'}</div><div class="stat-value" style="color:${!isDono(n)&&r.liquido<0?'var(--red)':'var(--gold2)'}">${fmt(isDono(n)?r.consumo+r.vales:Math.abs(r.liquido))}</div>
+      ${abertos.length?`<button class="btn btn-green btn-xs" style="margin-top:8px" onclick="pedirSenhaAdm('Fechar pagamento requer senha ADM',()=>fecharPagamentoFunc('${nj}'))">✅ ${isDono(n)?'Zerar':'Pagar e zerar'}</button>`:''}</div>
   </div>
   <div class="section-hdr"><div class="section-title">Lançamentos ${funcVerFechados?'(todos)':'em aberto'}</div>
     <label style="font-size:12px;color:var(--text2);display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${funcVerFechados?'checked':''} onchange="funcVerFechados=this.checked;renderFuncDetalhe('${nj}')"> Mostrar já pagos</label></div>
