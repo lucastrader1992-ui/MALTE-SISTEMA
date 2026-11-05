@@ -19,6 +19,8 @@ button{cursor:pointer;touch-action:manipulation;border:0;background:none}
 .top{position:sticky;top:0;z-index:5;background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));display:flex;align-items:center;gap:10px;min-height:60px}
 .top h1{font-size:16px;font-weight:700;line-height:1.2}
 .top small{display:block;font-size:12px;font-weight:400;color:var(--text2);margin-top:2px}
+.top .sair{flex:none;height:36px;padding:0 11px;border-radius:9px;background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600}
+.top h1{margin-right:auto;min-width:0}
 .top .tot{margin-left:auto;font-size:18px;font-weight:700;color:var(--gold2);white-space:nowrap}
 .back{width:40px;height:40px;border-radius:10px;background:var(--bg3);font-size:20px;flex:none}
 .tabs{display:flex;gap:6px;padding:10px 16px;background:var(--bg);position:sticky;top:60px;z-index:4}
@@ -84,6 +86,18 @@ input.busca:focus{border-color:var(--gold)}
 .modal .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .modal .row button{height:50px;border-radius:10px;font-weight:700}
 .modal .no{background:var(--bg3)}.modal .yes{background:var(--red);color:#fff}
+.login{max-width:400px;margin:0 auto;padding:max(40px,env(safe-area-inset-top)) 20px 32px;display:flex;flex-direction:column;gap:10px}
+.login .marca{text-align:center;margin:10px 0 18px}
+.login .marca b{display:block;font-size:26px;color:var(--gold2)}
+.login .marca span{display:block;margin-top:5px;color:var(--text2);font-size:14px}
+.login .qsm{color:var(--text2);font-size:13px;font-weight:600}
+.pessoa{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--border2);border-radius:12px;padding:15px}
+.pessoa b{display:block;font-size:16px}.pessoa small{display:block;margin-top:3px;color:var(--text2);font-size:12px}
+.login label{display:block;font-size:13px;font-weight:600;color:var(--text2)}
+.login input{display:block;width:100%;height:50px;margin-top:6px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);padding:0 14px;font-size:16px;outline:none;color:var(--text)}
+.login input:focus{border-color:var(--gold)}
+.login .erro{min-height:20px;color:#ff8878;font-size:13px}
+.login .volta{align-self:flex-start;color:var(--text2);font-size:14px;height:36px}
 .load{min-height:70vh;display:flex;align-items:center;justify-content:center;color:var(--text2);text-align:center;padding:20px;flex-direction:column;gap:14px}
 </style>
 </head>
@@ -94,13 +108,21 @@ input.busca:focus{border-color:var(--gold)}
 'use strict';
 const SUPABASE_URL='https://akicvaywryppktjiccpi.supabase.co';
 const SUPABASE_KEY='sb_publishable_KlSN5wVH24AYhF7kjEU0pg_NnVl2SQg';
-const TZ='America/Fortaleza',TOTAL_MESAS=29,PEND_KEY='malte_garcom_pendentes';
+const TZ='America/Fortaleza',TOTAL_MESAS=29,PEND_KEY='malte_garcom_pendentes',TOKEN_KEY='malte_garcom_sessao';
 const app=document.getElementById('app'),extras=document.getElementById('extras');
 let sb=null,produtos=[],turno=null,linhas=[],historico=[];
 let tela='mesas',mesaSel=null,catSel='Todos',busca='',modal=null,toastTxt='',toastT=null;
 let ultimaEstrutura='',ultimaAssinatura='';
+let token=lerToken(),usuario=null,usuariosLogin=[],loginSel=null,loginErro='',loginEnviando=false,equipe=null,modalAlvo=null,timers=[];
 let pend=lerPend(),enviando=false,seq=0,erroRede=false,iniciando=false,fechando=false;
 
+function lerToken(){try{return localStorage.getItem(TOKEN_KEY)}catch(e){return null}}
+function salvarToken(t){token=t;try{t?localStorage.setItem(TOKEN_KEY,t):localStorage.removeItem(TOKEN_KEY)}catch(e){}}
+async function rpc(fn,args){
+  const{data,error}=await sb.rpc(fn,{p_token:token,...(args||{})});
+  if(error){if(error.code==='GA401'){perderSessao();}throw error}
+  return data;
+}
 function lerPend(){try{return JSON.parse(localStorage.getItem(PEND_KEY)||'[]')}catch(e){return[]}}
 function salvarPend(){try{localStorage.setItem(PEND_KEY,JSON.stringify(pend))}catch(e){}}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -128,38 +150,23 @@ function linhasAtuais(){
 const totalDe=L=>L.reduce((s,l)=>s+l.qty*l.preco,0);
 const itensDe=L=>L.reduce((s,l)=>s+l.qty,0);
 
-async function todasLinhas(turnoId){
-  const out=[];
-  for(let i=0;;i+=1000){
-    const{data,error}=await sb.from('garcom_resumo').select('mesa,prod_id,nome,preco,qty').eq('turno_id',turnoId).order('mesa').order('nome').range(i,i+999);
-    if(error)throw error;
-    out.push(...data);
-    if(data.length<1000)return out;
-  }
-}
 async function carregarProdutos(){
   const{data,error}=await sb.from('produtos').select('id,nome,cat,emoji,preco,em_promo,preco_promo').order('nome');
   if(error)throw error;
   produtos=(data||[]).filter(p=>Number(p.preco)>0||(p.em_promo&&Number(p.preco_promo)>0));
 }
-async function carregarHistorico(){
-  const{data,error}=await sb.from('garcom_turnos_resumo').select('*').not('fechado_em','is',null).order('aberto_em',{ascending:false}).limit(90);
-  if(error)throw error;
-  historico=data||[];
-}
+async function carregarHistorico(){historico=await rpc('garcom_historico')||[]}
 async function atualizar(){
-  if(!sb||document.hidden)return;
+  if(!sb||!token||document.hidden)return;
   const ini=seq;
   try{
-    const{data,error}=await sb.from('garcom_turnos').select('id,aberto_em,fechado_em').is('fechado_em',null).limit(1);
-    if(error)throw error;
-    const t=(data&&data[0])||null;
-    const L=t?await todasLinhas(t.id):[];
+    const d=await rpc('garcom_estado');
     if(ini!==seq||enviando)return;
-    if(turno&&!t&&!fechando){await carregarHistorico();mesaSel=null;tela='mesas';mostrarToast('A venda foi fechada em outro aparelho.')}
-    turno=t;linhas=L;erroRede=false;
+    usuario=d.usuario;
+    if(turno&&!d.turno&&!fechando){await carregarHistorico();mesaSel=null;tela='mesas';mostrarToast('A venda foi fechada em outro aparelho.')}
+    turno=d.turno;linhas=d.linhas||[];erroRede=false;
     desenhar();
-  }catch(e){erroRede=true;desenharExtras()}
+  }catch(e){if(token){erroRede=true;desenharExtras()}}
 }
 function lancar(mesa,prod_id,nome,preco,delta){
   if(!turno)return;
@@ -167,22 +174,23 @@ function lancar(mesa,prod_id,nome,preco,delta){
   salvarPend();desenhar();enviar();
 }
 async function enviar(){
-  if(enviando||!pend.length||!sb)return;
+  if(enviando||!pend.length||!sb||!token)return;
   enviando=true;
   const lote=pend.slice(0,50);
   try{
-    const{error}=await sb.from('garcom_lancamentos').upsert(lote,{onConflict:'uid',ignoreDuplicates:true});
-    if(error){
+    try{await rpc('garcom_lancar',{p_itens:lote})}
+    catch(error){
       if(error.code==='P0001'||/venda fechada/i.test(error.message||'')){
         const ids=new Set(lote.map(x=>x.uid));
         pend=pend.filter(x=>!ids.has(x.uid));salvarPend();
         mostrarToast('Esse lançamento não entrou porque a venda já foi fechada.');
         enviando=false;await atualizar();return;
       }
+      if(error.code==='GA401'){enviando=false;return}
       throw error;
     }
     // confirma no servidor antes de tirar da fila, para o total não oscilar
-    const L=turno?await todasLinhas(turno.id):linhas;
+    const d=await rpc('garcom_estado');const L=d.linhas||[];
     const ids=new Set(lote.map(x=>x.uid));
     pend=pend.filter(x=>!ids.has(x.uid));salvarPend();
     linhas=L;seq++;erroRede=false;
@@ -205,8 +213,7 @@ async function aguardarEnvio(){
 window.iniciarVenda=async function(){
   if(iniciando)return;iniciando=true;desenhar();
   try{
-    const{error}=await sb.from('garcom_turnos').insert({});
-    if(error&&error.code!=='23505')throw error;
+    await rpc('garcom_iniciar');
     tela='mesas';mesaSel=null;
   }catch(e){mostrarToast('Não consegui iniciar a venda. Confira a internet e tente de novo.')}
   iniciando=false;await atualizar();desenhar();
@@ -217,9 +224,7 @@ window.confirmarFechar=async function(){
   if(fechando)return;fechando=true;desenharExtras();
   try{
     if(!await aguardarEnvio())throw new Error('pendente');
-    const id=turno.id;
-    const{error}=await sb.from('garcom_turnos').update({fechado_em:new Date().toISOString()}).eq('id',id).is('fechado_em',null);
-    if(error)throw error;
+    await rpc('garcom_fechar',{p_turno:turno.id});
     modal=null;mesaSel=null;linhas=[];turno=null;tela='relatorios';
     await carregarHistorico();
     fechando=false;await atualizar();desenhar();desenharExtras();
@@ -230,7 +235,74 @@ window.confirmarFechar=async function(){
   }
   fechando=false;desenharExtras();
 };
-window.irTela=async function(t){tela=t;mesaSel=null;busca='';catSel='Todos';if(t==='relatorios'){await carregarHistorico().catch(()=>{})}desenhar();scrollTo(0,0)};
+window.irTela=async function(t){tela=t;mesaSel=null;busca='';catSel='Todos';if(t==='relatorios'){await carregarHistorico().catch(()=>{})}if(t==='equipe'){await carregarEquipe()}desenhar();scrollTo(0,0)};
+async function carregarEquipe(){try{equipe=await rpc('garcom_equipe')}catch(e){equipe=null}}
+window.pedirSair=function(){if(pend.length){mostrarToast('Espere enviar os lançamentos antes de sair.');return}modal='sair';desenharExtras()};
+window.confirmarSair=async function(){const t=token;modal=null;try{await sb.rpc('garcom_sair',{p_token:t})}catch(e){}perderSessao()};
+window.pedirReset=function(id,nome){modal='reset';modalAlvo={id,nome};desenharExtras()};
+window.confirmarReset=async function(){
+  const a=modalAlvo;modal=null;modalAlvo=null;
+  try{await rpc('garcom_redefinir_senha',{p_usuario:a.id});await carregarEquipe();mostrarToast(a.nome+' vai criar uma nova senha no próximo acesso.')}
+  catch(e){mostrarToast('Não consegui redefinir a senha. Tente de novo.')}
+  ultimaAssinatura='';desenhar();
+};
+function perderSessao(){
+  salvarToken(null);usuario=null;turno=null;linhas=[];historico=[];equipe=null;mesaSel=null;tela='mesas';modal=null;
+  loginSel=null;loginErro='';ultimaEstrutura='';ultimaAssinatura='';pararTimers();abrirLogin();
+}
+function pararTimers(){timers.forEach(clearInterval);timers=[]}
+function ligarTimers(){
+  if(timers.length)return;
+  timers=[setInterval(atualizar,4000),setInterval(()=>carregarProdutos().then(()=>{if(mesaSel)desenharProdutos()}).catch(()=>{}),60000)];
+}
+// ---------- login ----------
+async function abrirLogin(){
+  extras.innerHTML='';
+  app.innerHTML='<div class="load">Carregando...</div>';
+  try{
+    const{data,error}=await sb.rpc('garcom_usuarios_lista');if(error)throw error;
+    usuariosLogin=data||[];desenharLogin();
+  }catch(e){app.innerHTML='<div class="load"><div>Não consegui conectar. Confira a internet.</div><button class="big gold" style="max-width:220px" onclick="location.reload()">Tentar de novo</button></div>'}
+}
+function desenharLogin(){
+  const u=loginSel&&usuariosLogin.find(x=>x.id===loginSel);
+  if(!u){
+    app.innerHTML=`<div class="login"><div class="marca"><b>Malte</b><span>Controle do garçom</span></div><p class="qsm">Quem está entrando?</p>${usuariosLogin.map(x=>`<button class="pessoa" data-u="${Number(x.id)}"><b>${esc(x.nome)}</b><small>${x.perfil==='mae'?'Conta mãe':'Garçom'}${x.primeiro_acesso?' · primeiro acesso':''}</small></button>`).join('')}</div>`;
+    return;
+  }
+  const novo=u.primeiro_acesso;
+  app.innerHTML=`<form class="login" id="f-login" autocomplete="on"><button type="button" class="volta" data-volta="1">‹ Trocar usuário</button><div class="marca"><b>${esc(u.nome)}</b><span>${novo?'Primeiro acesso: crie sua senha':'Digite sua senha'}</span></div>
+    ${novo&&u.precisa_codigo?`<label>Código de ativação<input id="l-cod" autocapitalize="characters" autocomplete="off" required></label>`:''}
+    <label>${novo?'Nova senha (mínimo 6 caracteres)':'Senha'}<input id="l-s1" type="password" autocomplete="${novo?'new-password':'current-password'}" required></label>
+    ${novo?`<label>Repita a senha<input id="l-s2" type="password" autocomplete="new-password" required></label>`:''}
+    <div class="erro" id="l-erro" role="alert">${esc(loginErro)}</div>
+    <button class="big gold" id="l-ok" ${loginEnviando?'disabled':''}>${novo?'Criar senha e entrar':'Entrar'}</button></form>`;
+  const c=document.getElementById(novo&&u.precisa_codigo?'l-cod':'l-s1');if(c)c.focus();
+}
+function erroLogin(t){loginErro=t;const e=document.getElementById('l-erro');if(e)e.textContent=t}
+async function enviarLogin(){
+  if(loginEnviando)return;
+  const u=usuariosLogin.find(x=>x.id===loginSel);if(!u)return;
+  const s1=document.getElementById('l-s1').value,s2=document.getElementById('l-s2'),cod=document.getElementById('l-cod');
+  erroLogin('');
+  if(u.primeiro_acesso){
+    if(s1.length<6)return erroLogin('A senha precisa ter pelo menos 6 caracteres.');
+    if(s2.value!==s1)return erroLogin('As duas senhas não são iguais.');
+  }
+  const btn=document.getElementById('l-ok');loginEnviando=true;btn.disabled=true;
+  try{
+    const{data,error}=u.primeiro_acesso?await sb.rpc('garcom_primeiro_acesso',{p_usuario:u.id,p_senha:s1,p_codigo:cod?cod.value:null}):await sb.rpc('garcom_entrar',{p_usuario:u.id,p_senha:s1});
+    if(error)throw error;
+    if(!data.ok){erroLogin(data.erro);return}
+    salvarToken(data.token);loginSel=null;loginErro='';
+    await entrarNoApp();
+  }catch(e){erroLogin('Não consegui conectar. Confira a internet.')}
+  finally{loginEnviando=false;const b=document.getElementById('l-ok');if(b)b.disabled=false}
+}
+async function entrarNoApp(){
+  await carregarHistorico();await atualizar();ultimaAssinatura='';desenhar();enviar();ligarTimers();
+}
+app.addEventListener('submit',e=>{if(e.target.id==='f-login'){e.preventDefault();enviarLogin()}});
 window.abrirMesa=function(n){mesaSel=n;busca='';catSel='Todos';carregarProdutos().catch(()=>{}).then(desenhar);desenhar();scrollTo(0,0)};
 window.voltar=function(){mesaSel=null;desenhar();scrollTo(0,0)};
 window.addProd=function(id){const p=produtos.find(x=>x.id===id);if(p)lancar(mesaSel,p.id,nomeLimpo(p.nome),precoDe(p),1)};
@@ -240,10 +312,10 @@ window.setBusca=function(v){busca=v;desenharProdutos()};
 
 // ---------- telas ----------
 function topo(tit,sub,tot,voltarBtn){
-  return`<header class="top">${voltarBtn?`<button class="back" onclick="voltar()" aria-label="Voltar">‹</button>`:''}<h1>${esc(tit)}<small>${esc(sub)}</small></h1>${tot!=null?`<div class="tot">${brl(tot)}</div>`:''}</header>`;
+  return`<header class="top">${voltarBtn?`<button class="back" onclick="voltar()" aria-label="Voltar">‹</button>`:''}<h1>${esc(tit)}<small>${esc(sub)}</small></h1>${tot!=null?`<div class="tot">${brl(tot)}</div>`:''}${voltarBtn?'':`<button class="sair" onclick="pedirSair()">Sair</button>`}</header>`;
 }
 function abas(){
-  const a=[['mesas','Mesas'],['resumo','Resumo'],['relatorios','Relatórios']];
+  const a=[['mesas','Mesas'],['resumo','Resumo'],['relatorios','Relatórios']];if(usuario&&usuario.perfil==='mae')a.push(['equipe','Equipe']);
   return`<nav class="tabs">${a.map(([k,n])=>`<button class="${tela===k?'on':''}" onclick="irTela('${k}')">${n}</button>`).join('')}</nav>`;
 }
 function telaMesas(L){
@@ -319,31 +391,45 @@ function telaRelatorios(){
   if(!historico.length)return h+'<div class="lines"><div class="empty">Nenhuma venda fechada ainda.</div></div>';
   return h+historico.map(t=>`<div class="tr"><div class="t"><b>${fmtData(t.aberto_em)} · ${brl(t.total)}</b><small>${fmtHora(t.aberto_em)} até ${fmtData(t.fechado_em)===fmtData(t.aberto_em)?'':fmtData(t.fechado_em)+' '}${fmtHora(t.fechado_em)} · ${t.itens} itens</small></div><button onclick="baixarPDF(${Number(t.id)})">PDF</button></div>`).join('');
 }
+function telaEquipe(){
+  if(!equipe)return'<div class="lines" style="margin-top:8px"><div class="empty">Não consegui carregar a equipe.</div></div>';
+  let h='<div class="sec" style="margin-top:8px">Garçons</div>';
+  h+=(equipe.usuarios||[]).map(u=>`<div class="tr"><div class="t"><b>${esc(u.nome)}</b><small>${u.tem_senha?'Senha criada':'Aguardando primeiro acesso'}${u.ultimo_acesso_em?' · último acesso '+fmtDH(u.ultimo_acesso_em):''}</small></div>${u.tem_senha?`<button data-reset="${Number(u.id)}" data-nome="${esc(u.nome)}">Nova senha</button>`:''}</div>`).join('');
+  const A=equipe.atividade||[];
+  h+='<div class="sec">Últimos lançamentos</div>';
+  h+=`<div class="lines">${A.length?A.map(x=>`<div class="line"><div class="n">${x.delta>0?'+1':'−1'} ${esc(x.nome)}<small>Mesa ${Number(x.mesa)} · ${esc(x.usuario||'Sem usuário')} · ${fmtDH(x.criado_em)}</small></div><div class="v" style="color:${x.delta>0?'var(--green)':'var(--red)'}">${brl(x.preco)}</div></div>`).join(''):'<div class="empty">Nenhum lançamento ainda.</div>'}</div>`;
+  return h;
+}
 function desenhar(){
   if(!sb)return;
+  if(!token||!usuario)return;
   const L=linhasAtuais();
-  const estrutura=[tela,mesaSel,turno&&turno.id,iniciando,catSel,produtos.map(p=>p.id+':'+precoDe(p)).join(),historico.map(t=>t.id).join()].join('#');
+  const estrutura=[usuario.id,tela,mesaSel,turno&&turno.id,iniciando,catSel,produtos.map(p=>p.id+':'+precoDe(p)).join(),historico.map(t=>t.id).join()].join('#');
   if(estrutura===ultimaEstrutura&&turno&&mesaSel){atualizarMesaNoLugar(L);desenharExtras();return}
   if(estrutura===ultimaEstrutura&&turno&&tela==='mesas'){atualizarGradeNoLugar(L);desenharExtras();return}
-  const assinatura=estrutura+JSON.stringify(L);
+  const assinatura=estrutura+JSON.stringify(L)+(tela==='equipe'?JSON.stringify(equipe):'');
   if(assinatura===ultimaAssinatura){desenharExtras();return}
   ultimaEstrutura=estrutura;ultimaAssinatura=assinatura;
+  if(!turno&&tela==='equipe'){
+    app.innerHTML=`${topo('Equipe',usuario.nome)}<main><button class="big" style="background:var(--bg3);margin-top:10px" onclick="irTela('mesas')">Voltar</button>${telaEquipe()}</main>`;
+    desenharExtras();return;
+  }
   if(!turno&&tela!=='relatorios'){
-    app.innerHTML=`${topo('Malte · Garçom','Nenhuma venda aberta')}<main><div class="hero"><h2>Pronto para começar?</h2><p>Inicie a venda para liberar as mesas. Isso não mexe no estoque nem no caixa da Malte.</p><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar venda'}</button></div><button class="big" style="background:var(--bg3)" onclick="irTela('relatorios')">Ver relatórios</button></main>`;
+    app.innerHTML=`${topo('Malte · Garçom',usuario.nome+' · nenhuma venda aberta')}<main><div class="hero"><h2>Pronto para começar?</h2><p>Inicie a venda para liberar as mesas. Isso não mexe no estoque nem no caixa da Malte.</p><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar venda'}</button></div><button class="big" style="background:var(--bg3)" onclick="irTela('relatorios')">Ver relatórios</button>${usuario.perfil==='mae'?`<button class="big" style="background:var(--bg3);margin-top:8px" onclick="irTela('equipe')">Equipe</button>`:''}</main>`;
     desenharExtras();return;
   }
   if(!turno){
-    app.innerHTML=`${topo('Relatórios','Nenhuma venda aberta')}<main><div class="btns" style="margin:10px 0 0"><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar nova venda'}</button></div>${telaRelatorios()}</main>`;
+    app.innerHTML=`${topo('Relatórios',usuario.nome+' · nenhuma venda aberta')}<main><div class="btns" style="margin:10px 0 0"><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar nova venda'}</button></div>${telaRelatorios()}</main>`;
     desenharExtras();return;
   }
-  const sub='Venda aberta desde '+fmtHora(turno.aberto_em);
+  const sub=usuario.nome+' · aberta às '+fmtHora(turno.aberto_em);
   if(mesaSel){
     const y=scrollY;
     app.innerHTML=`${topo('Mesa '+mesaSel,itensDe(L.filter(l=>l.mesa===mesaSel))+' itens',totalDe(L.filter(l=>l.mesa===mesaSel)),true)}<main>${telaMesa(L)}</main>`;
     scrollTo(0,y);
   }else{
     const y=scrollY;
-    const c=tela==='resumo'?telaResumo(L):tela==='relatorios'?telaRelatorios():telaMesas(L);
+    const c=tela==='resumo'?telaResumo(L):tela==='relatorios'?telaRelatorios():tela==='equipe'?telaEquipe():telaMesas(L);
     app.innerHTML=`${topo('Malte · Garçom',sub,totalDe(L))}${abas()}<main>${c}</main>`;
     scrollTo(0,y);
   }
@@ -361,12 +447,17 @@ function desenharExtras(){
     const L=linhasAtuais();
     h+=`<div class="ov"><div class="modal" role="dialog" aria-modal="true"><h3>Fechar a venda?</h3><p>Depois de fechar, ninguém mais lança nesta venda. O relatório fica salvo em Relatórios.</p><div class="val">${brl(totalDe(L))}</div><div class="row"><button class="no" onclick="cancelarModal()" ${fechando?'disabled':''}>Voltar</button><button class="yes" onclick="confirmarFechar()" ${fechando?'disabled':''}>${fechando?'Fechando...':'Fechar venda'}</button></div></div></div>`;
   }
+  if(modal==='sair')h+=`<div class="ov"><div class="modal" role="dialog" aria-modal="true"><h3>Sair da conta?</h3><p style="margin-bottom:16px">Você vai precisar da senha para entrar de novo.</p><div class="row"><button class="no" onclick="cancelarModal()">Voltar</button><button class="yes" onclick="confirmarSair()">Sair</button></div></div></div>`;
+  if(modal==='reset'&&modalAlvo)h+=`<div class="ov"><div class="modal" role="dialog" aria-modal="true"><h3>Criar nova senha?</h3><p style="margin-bottom:16px">${esc(modalAlvo.nome)} sai da conta e cria outra senha no próximo acesso.</p><div class="row"><button class="no" onclick="cancelarModal()">Voltar</button><button class="yes" onclick="confirmarReset()">Confirmar</button></div></div></div>`;
   extras.innerHTML=h;
 }
 
 // botões cujos dados vêm do banco usam atributos, nunca texto dentro de onclick
 app.addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.u!=null){loginSel=Number(b.dataset.u);loginErro='';desenharLogin();return}
+  if(b.dataset.volta){loginSel=null;loginErro='';desenharLogin();return}
+  if(b.dataset.reset!=null){pedirReset(Number(b.dataset.reset),b.dataset.nome);return}
   if(b.dataset.p!=null)addProd(Number(b.dataset.p));
   else if(b.dataset.m!=null)abrirMesa(Number(b.dataset.m));
   else if(b.dataset.k!=null)ajustar(b.dataset.k,Number(b.dataset.d));
@@ -378,17 +469,17 @@ window.baixarPDF=async function(id){
   if(!(window.jspdf&&window.jspdf.jsPDF)){mostrarToast('Não consegui carregar o gerador de PDF. Confira a internet.');return}
   try{
     await aguardarEnvio();
-    const{data:t,error}=await sb.from('garcom_turnos').select('*').eq('id',id).single();
-    if(error)throw error;
-    const L=(await todasLinhas(id)).map(l=>({...l,preco:Number(l.preco),qty:Number(l.qty)}));
+    const rel=await rpc('garcom_relatorio',{p_turno:id});
+    const t=rel.turno;
+    const L=(rel.linhas||[]).map(l=>({...l,preco:Number(l.preco),qty:Number(l.qty)}));
     const doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
     const txt=s=>String(s).replace(/[^ -ÿ]/g,'').trim();
     const gold=[150,108,8],dark=[28,30,40],cinza=[110,112,125];
     doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...dark);doc.text('Malte Distribuidora',14,18);
     doc.setFontSize(12);doc.setTextColor(...gold);doc.text('Controle do garçom',14,25);
     doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(...cinza);
-    doc.text('Início: '+fmtDH(t.aberto_em),14,33);
-    doc.text(t.fechado_em?'Fim: '+fmtDH(t.fechado_em):'VENDA EM ANDAMENTO, relatório parcial gerado em '+fmtDH(Date.now()),14,38.5);
+    doc.text('Início: '+fmtDH(t.aberto_em)+(t.aberto_por?' ('+t.aberto_por+')':''),14,33);
+    doc.text(t.fechado_em?'Fim: '+fmtDH(t.fechado_em)+(t.fechado_por?' ('+t.fechado_por+')':''):'VENDA EM ANDAMENTO, relatório parcial gerado em '+fmtDH(Date.now()),14,38.5);
     doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(...cinza);doc.text('TOTAL',196,18,{align:'right'});
     doc.setFontSize(18);doc.setTextColor(...dark);doc.text(brl(totalDe(L)).replace(/ /g,' '),196,26,{align:'right'});
     doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(...cinza);
@@ -424,13 +515,12 @@ async function iniciar(){
     if(typeof supabase==='undefined')throw new Error('sem-lib');
     sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
     await carregarProdutos();
-    await carregarHistorico();
-    await atualizar();
-    desenhar();
-    enviar();
-    setInterval(atualizar,4000);
-    setInterval(()=>carregarProdutos().then(()=>{if(mesaSel)desenharProdutos()}).catch(()=>{}),60000);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden){atualizar();enviar()}});
+    if(token){
+      try{await entrarNoApp()}catch(e){if(token)throw e}
+      if(token&&!usuario)throw new Error('sem-conexao');
+      if(!token)return;
+    }else abrirLogin();
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden&&token){atualizar();enviar()}});
   }catch(e){
     console.error(e);
     app.innerHTML='<div class="load"><div>Não consegui conectar. Confira a internet.</div><button class="big gold" style="max-width:220px" onclick="location.reload()">Tentar de novo</button></div>';
