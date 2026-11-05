@@ -1091,6 +1091,7 @@ async function lancarMesaNoFuncionario(id){
   if(window._fechandoMesa)return;const nome=funcDaMesa(id);if(!nome)return;
   window._fechandoMesa=true;
   try{
+    await window._mesaFila; // espera os toques que ainda estão sendo salvos
     const{data:itens,error:eI}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);if(eI)throw eI;const I=itens||[];
     if(!I.length){closeModal();return;}
     const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);
@@ -1145,8 +1146,39 @@ async function bloquearSemEstoque(prod,qty){
   if(qty>disp){alert(`🚫 Estoque insuficiente de ${prod.nome}.\nDisponível: ${disp} | Pedido: ${qty}`);return true;}
   return false;
 }
-async function addItemMesa(mesaId){try{const sel=document.getElementById('mesa-prod-sel');const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(!prod)return;if(await bloquearSemEstoque(prod,qty))return;const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty,'mesa '+mesaId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
-async function addItemMesaTouch(mesaId,pid){try{const qty=parseInt(document.getElementById('mesa-qty').value)||1;const{data:prod}=await sb.from('produtos').select('*').eq('id',pid).single();if(!prod)return;if(await bloquearSemEstoque(prod,qty))return;const preco=prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco;const{data:exist}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).maybeSingle();if(exist){await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);}else{await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});}await descontarEstoqueItem(pid,qty,'mesa '+mesaId);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao adicionar item: '+e.message);}}
+// ── Fila de toques da mesa: cada toque é processado em ordem; nenhum se perde e nenhum duplica ──
+window._mesaFila=Promise.resolve();window._mesaPend=0;
+function enfileirarMesa(mesaId,fn){
+  window._mesaPend++;
+  const p=window._mesaFila.then(fn).catch(e=>{alert('Erro ao adicionar item: '+(e&&e.message?e.message:e)+'\n\nNada foi descontado do estoque. Toque de novo.');})
+    .finally(async()=>{window._mesaPend--;if(window._mesaPend===0){try{await modalMesaAberta(mesaId);}catch(e){}}});
+  window._mesaFila=p;return p;
+}
+function mesaToast(msg,cor){let t=document.getElementById('mesa-toast');if(!t){t=document.createElement('div');t.id='mesa-toast';t.style.cssText='position:fixed;left:50%;bottom:24px;transform:translateX(-50%);color:#fff;padding:10px 18px;border-radius:999px;font-weight:700;font-size:15px;z-index:99999;box-shadow:0 4px 14px rgba(0,0,0,.4);transition:opacity .2s;pointer-events:none';document.body.appendChild(t);}t.style.background=cor||'#16a34a';t.textContent=msg;t.style.opacity='1';clearTimeout(window._mesaToastT);window._mesaToastT=setTimeout(()=>{t.style.opacity='0';},1200);}
+async function _addItemMesaCore(mesaId,pid,qty,precoForcado){
+  const{data:prod,error:eP}=await sb.from('produtos').select('*').eq('id',pid).single();if(eP)throw eP;if(!prod)return;
+  if(await bloquearSemEstoque(prod,qty))return;
+  const preco=precoForcado!=null&&!isNaN(precoForcado)?precoForcado:(prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco);
+  const{data:ex,error:eE}=await sb.from('mesa_itens').select('*').eq('mesa_id',mesaId).eq('prod_id',pid).order('id').limit(1);if(eE)throw eE;
+  const exist=(ex||[])[0];
+  if(exist){const{error}=await sb.from('mesa_itens').update({qty:exist.qty+qty}).eq('id',exist.id);if(error)throw error;}
+  else{const{error}=await sb.from('mesa_itens').insert({mesa_id:mesaId,prod_id:pid,nome:prod.emoji+' '+prod.nome,preco,qty});if(error)throw error;}
+  // só desconta depois que o item ficou salvo na comanda
+  await descontarEstoqueItem(pid,qty,'mesa '+mesaId);
+  mesaToast('✓ '+qty+'x '+prod.nome);
+}
+function addItemMesa(mesaId){
+  const sel=document.getElementById('mesa-prod-sel');if(!sel)return;
+  const pid=parseInt(sel.value);const preco=parseFloat(sel.options[sel.selectedIndex].dataset.preco);
+  const qty=parseInt(document.getElementById('mesa-qty').value)||1;
+  mesaToast('+'+qty+' adicionando...','#475569');
+  return enfileirarMesa(mesaId,()=>_addItemMesaCore(mesaId,pid,qty,preco));
+}
+function addItemMesaTouch(mesaId,pid){
+  const el=document.getElementById('mesa-qty');const qty=parseInt(el&&el.value)||1;
+  mesaToast('+'+qty+' adicionando...','#475569');
+  return enfileirarMesa(mesaId,()=>_addItemMesaCore(mesaId,pid,qty,null));
+}
 
 // ══════════════════════════════════════════════
 // 💵 PAGAMENTO PARCIAL DA MESA (sem fechar a mesa)
@@ -1216,9 +1248,9 @@ async function imprimirComandaMesa(mesaId){
     pa.innerHTML=html;pa.style.display='block';window.print();pa.style.display='none';pa.innerHTML='';
   }catch(e){alert('Erro ao gerar comanda: '+e.message);}
 }
-async function maisUmItemMesa(itemId,mesaId){
-  if(window._maisUmLock)return;window._maisUmLock=true;
-  try{
+function maisUmItemMesa(itemId,mesaId){
+  mesaToast('+1 adicionando...','#475569');
+  return enfileirarMesa(mesaId,async()=>{
     const{data:item,error:eI}=await sb.from('mesa_itens').select('*').eq('id',itemId).single();
     if(eI||!item)throw new Error(eI?eI.message:'Item não encontrado');
     const{data:prod}=await sb.from('produtos').select('*').eq('id',item.prod_id).maybeSingle();
@@ -1226,29 +1258,37 @@ async function maisUmItemMesa(itemId,mesaId){
     const{error:eU}=await sb.from('mesa_itens').update({qty:item.qty+1}).eq('id',itemId);
     if(eU)throw new Error(eU.message);
     await descontarEstoqueItem(item.prod_id,1,'mesa '+mesaId+' (+1)');
-    await modalMesaAberta(mesaId);
-  }catch(e){alert('Erro ao adicionar mais 1: '+e.message);}
-  finally{window._maisUmLock=false;}
+    mesaToast('✓ +1 '+(prod?prod.nome:''));
+  });
 }
-async function removerItemMesa(itemId,mesaId){const d=async()=>{try{const{data:item}=await sb.from('mesa_itens').select('*').eq('id',itemId).single();await sb.from('mesa_itens').delete().eq('id',itemId);if(item)await devolverEstoqueItem(item.prod_id,item.qty);await modalMesaAberta(mesaId);}catch(e){alert('Erro ao remover item: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',d);}}
+async function removerItemMesa(itemId,mesaId){const d=async()=>{try{await window._mesaFila;const{data:item}=await sb.from('mesa_itens').select('*').eq('id',itemId).single();if(!item){await modalMesaAberta(mesaId);return;}const{error:eD}=await sb.from('mesa_itens').delete().eq('id',itemId);if(eD)throw eD;await devolverEstoqueItem(item.prod_id,item.qty,'mesa '+mesaId+' (removido)');await modalMesaAberta(mesaId);}catch(e){alert('Erro ao remover item: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Remover item requer senha ADM',d);}}
 async function fecharMesaVenda(id){
   if(funcDaMesa(id))return lancarMesaNoFuncionario(id);
   if(window._fechandoMesa)return;window._fechandoMesa=true;
-  try{const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(!m||m.status!=='ocupada'){await sb.from('mesa_itens').delete().eq('mesa_id',id);closeModal();renderMesas();return;}
-  const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);const I=itens||[];const totalBruto=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);const pagoParcial=m.pago_parcial||0;
-  await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);await sb.from('mesa_itens').delete().eq('mesa_id',id);
-  const valorFinal=Math.max(0,totalBruto-pagoParcial);
-  // O estoque já foi descontado no momento em que cada item foi adicionado na comanda — aqui só registra a venda, não desconta de novo.
-  if(valorFinal>0){
-    const{data:venda}=await sb.from('vendas').insert({tipo:`Mesa ${id}`,total:valorFinal,pagamento:payAtual,operador:currentUser.nome}).select().single();
-    if(venda&&I.length>0)await sb.from('venda_itens').insert(I.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));
-    if(venda)await verComprovante(venda.id);else closeModal();
-  }else{
-    closeModal();
-  }
-  renderMesas();}catch(e){console.error(e);closeModal();renderMesas();}finally{window._fechandoMesa=false;}
+  try{
+    await window._mesaFila; // espera os toques que ainda estão sendo salvos
+    const{data:m,error:eM}=await sb.from('mesas').select('*').eq('id',id).single();if(eM)throw eM;
+    const{data:itens,error:eI}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);if(eI)throw eI;const I=itens||[];
+    if(!m||(m.status!=='ocupada'&&!I.length)){closeModal();renderMesas();return;}
+    const totalBruto=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);const pagoParcial=m.pago_parcial||0;
+    const valorFinal=Math.max(0,totalBruto-pagoParcial);
+    // O estoque já foi descontado quando cada item entrou na comanda — aqui só registra a venda.
+    let venda=null;
+    if(valorFinal>0||I.length){
+      const{data:v,error:eV}=await sb.from('vendas').insert({tipo:`Mesa ${id}`,total:valorFinal,pagamento:valorFinal>0?payAtual:'pago no parcial',operador:currentUser.nome}).select().single();
+      if(eV||!v)throw new Error('a venda NÃO foi registrada ('+(eV?eV.message:'sem resposta')+'). A mesa continua aberta — tente fechar de novo.');
+      venda=v;
+      if(I.length){const{error:eVI}=await sb.from('venda_itens').insert(I.map(i=>({venda_id:v.id,nome:i.nome,qty:i.qty,total:Number(i.preco)*i.qty})));if(eVI)console.error('Itens da venda não salvos:',eVI.message);}
+    }
+    const{error:eDel}=await sb.from('mesa_itens').delete().eq('mesa_id',id);
+    const{error:eLib}=await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
+    if(eDel||eLib)alert('⚠️ A venda foi registrada, mas a mesa não foi liberada direito ('+((eDel||eLib).message)+').\nNÃO feche de novo (duplicaria a venda). Me avise (Jarvis).');
+    if(venda&&valorFinal>0)await verComprovante(venda.id);else closeModal();
+    renderMesas();
+  }catch(e){console.error(e);alert('Erro ao fechar mesa: '+e.message);}
+  finally{window._fechandoMesa=false;}
 }
-async function cancelarMesa(id){const d=async()=>{try{const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);const I=itens||[];for(const i of I){await devolverEstoqueItem(i.prod_id,i.qty);}await sb.from('mesa_itens').delete().eq('mesa_id',id);await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);closeModal();renderMesas();}catch(e){alert('Erro ao cancelar mesa: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Cancelar mesa requer senha ADM',d);}}
+async function cancelarMesa(id){const d=async()=>{try{const{data:itens}=await sb.from('mesa_itens').select('*').eq('mesa_id',id);const I=itens||[];await window._mesaFila;const{error:eDel}=await sb.from('mesa_itens').delete().eq('mesa_id',id);if(eDel)throw eDel;for(const i of I){await devolverEstoqueItem(i.prod_id,i.qty,'mesa '+id+' (cancelada)');}await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);closeModal();renderMesas();}catch(e){alert('Erro ao cancelar mesa: '+e.message);}};if(currentUser.id==='adm'){d();}else{closeModal();pedirSenhaAdm('Cancelar mesa requer senha ADM',d);}}
 
 async function renderBalcao(){
   const[{data:prods}]=await Promise.all([sb.from('produtos').select('*').order('nome'),carregarBalcaoRemoto()]);const P=prods||[];
@@ -1736,7 +1776,7 @@ async function confirmarCancelarFesta(){
 }
 async function renderEstoque(){
   stopEstoquePolling();
-  document.getElementById('tab-content').innerHTML=`<div class="section-hdr"><div><div class="section-title">📦 Controle de Estoque</div><div class="section-sub" id="estoque-ultima-atualizacao">Carregando...</div></div><button class="btn btn-primary btn-sm" onclick="abrirEntrada()">+ Entrada</button></div><div id="estoque-tabela-wrap"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
+  document.getElementById('tab-content').innerHTML=`<div class="section-hdr"><div><div class="section-title">📦 Controle de Estoque</div><div class="section-sub" id="estoque-ultima-atualizacao">Carregando...</div></div><div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn btn-teal btn-sm" onclick="abrirEstoquePorData()">📅 Estoque por data</button><button class="btn btn-primary btn-sm" onclick="abrirEntrada()">+ Entrada</button></div></div><div id="estoque-tabela-wrap"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>`;
   await atualizarTabelaEstoque();
   estoquePollingInterval=setInterval(async()=>{if(currentTab!=='estoque')return stopEstoquePolling();await atualizarTabelaEstoque();},10000);
 }
@@ -1745,8 +1785,60 @@ async function atualizarTabelaEstoque(){
   const sub=document.getElementById('estoque-ultima-atualizacao');if(sub)sub.textContent=`🔄 Atualizado: ${agora}`;
   const wrap=document.getElementById('estoque-tabela-wrap');if(!wrap)return;
   wrap.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Produto</th><th>Cat</th><th>Estoque</th><th>Custo</th><th>Valor Total</th><th>Status</th></tr></thead>
-  <tbody>${(P||[]).map(p=>`<tr><td>${p.emoji} <b>${p.nome}</b>${isCopao(p.nome)?' <span class="badge badge-orange" title="Estoque calculado a partir da aba Copão">🥤 calculado</span>':''}</td><td><span class="badge badge-blue">${p.cat}</span></td><td style="font-weight:700;font-size:14px">${p.estoque}</td><td style="color:var(--text2)">${fmt(p.custo)}</td><td style="color:var(--gold2);font-weight:600">${fmt(p.custo*p.estoque)}</td><td><span class="badge ${p.estoque===0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}">${p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK'}</span></td></tr>`).join('')}</tbody>
+  <tbody>${(P||[]).map(p=>`<tr><td>${p.emoji} <b>${p.nome}</b>${isCopao(p.nome)?' <span class="badge badge-orange" title="Estoque calculado a partir da aba Copão">🥤 calculado</span>':''}</td><td><span class="badge badge-blue">${p.cat}</span></td><td style="font-weight:700;font-size:14px">${p.estoque}</td><td style="color:var(--text2)">${fmt(p.custo)}</td><td style="color:var(--gold2);font-weight:600">${fmt(p.custo*p.estoque)}</td><td><span class="badge ${p.estoque<=0?'badge-red':p.estoque<20?'badge-gold':'badge-green'}">${p.estoque<0?'NEGATIVO — lançar entrada':p.estoque===0?'ZERADO':p.estoque<20?'BAIXO':'OK'}</span></td></tr>`).join('')}</tbody>
   </table></div>`;
+}
+// ── 📅 ESTOQUE POR DATA: mostra o estoque no fim do dia comercial escolhido (até 06h do dia seguinte) ──
+const ESTOQUE_HIST_INICIO='2026-10-28';
+function abrirEstoquePorData(){
+  const hoje=hojeLocalStr(getDiaComercial().inicio);
+  openModal(`<h3>📅 Estoque por data</h3>
+  <p style="color:var(--text2);font-size:12px;margin:4px 0 12px">Mostra quanto tinha de cada produto no <b>fim do dia</b> escolhido (dia comercial: até 06h do dia seguinte). Só consulta — não mexe no estoque.</p>
+  <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px">
+    <div class="modal-field" style="flex:1;margin:0"><label>Dia</label><input type="date" id="epd-data" min="${ESTOQUE_HIST_INICIO}" max="${hoje}" value="${hoje}" onchange="carregarEstoquePorData()"></div>
+    <button class="btn btn-primary btn-sm" onclick="carregarEstoquePorData()">Ver</button>
+  </div>
+  <label style="font-size:12px;color:var(--text2);display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="epd-zerados" onchange="desenharEstoquePorData()"> Mostrar produtos zerados</label>
+  <div id="epd-res"><div class="empty"><div class="spinner" style="margin:0 auto"></div></div></div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button><button class="btn btn-teal" onclick="imprimirEstoquePorData()">🖨️ Imprimir</button></div>`);
+  carregarEstoquePorData();
+}
+async function carregarEstoquePorData(){
+  const res=document.getElementById('epd-res');if(!res)return;
+  const d=(document.getElementById('epd-data')||{}).value;
+  if(!d){res.innerHTML='<div class="empty"><p>Escolha um dia.</p></div>';return;}
+  if(d<ESTOQUE_HIST_INICIO){res.innerHTML=`<div class="empty"><p>O histórico começa em ${ESTOQUE_HIST_INICIO.split('-').reverse().join('/')}.</p></div>`;return;}
+  res.innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
+  const[y,m,dd]=d.split('-').map(Number);
+  let corte=new Date(y,m-1,dd+1,6,0,0,0); // fim do dia comercial = 06h do dia seguinte
+  const agora=new Date();if(corte>agora)corte=agora;
+  try{
+    const{data,error}=await sb.rpc('estoque_na_data',{p_quando:corte.toISOString()});
+    if(error){
+      if(/PGRST202|Could not find|estoque_na_data/i.test((error.code||'')+' '+(error.message||''))){res.innerHTML='<div class="empty"><p>⚠️ Falta rodar o SQL do "Estoque por data" no Supabase (função estoque_na_data).</p></div>';return;}
+      throw error;
+    }
+    window._epdDados={dia:d,corte,linhas:data||[]};desenharEstoquePorData();
+  }catch(e){res.innerHTML=`<div class="empty"><p>Erro ao carregar: ${e.message}</p></div>`;}
+}
+function desenharEstoquePorData(){
+  const res=document.getElementById('epd-res');const D=window._epdDados;if(!res||!D)return;
+  const mostrarZ=(document.getElementById('epd-zerados')||{}).checked;
+  const L=D.linhas.filter(l=>mostrarZ||Number(l.estoque_na_data)!==0||Number(l.estoque_atual)!==0);
+  const tot=D.linhas.reduce((s,l)=>s+(isCopao(l.nome)?0:Math.max(0,Number(l.estoque_na_data)||0)),0);
+  const diaBR=D.dia.split('-').reverse().join('/');
+  res.innerHTML=`<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Fim do dia <b>${diaBR}</b> • ${tot} unidades (sem o Copão)</div>
+  <div class="table-wrap" style="max-height:55vh;overflow:auto"><table><thead><tr><th>Produto</th><th style="text-align:center">${diaBR}</th><th style="text-align:center">Hoje</th><th style="text-align:center">Dif.</th></tr></thead><tbody>
+  ${L.map(l=>{const a=Number(l.estoque_na_data)||0,h=Number(l.estoque_atual)||0,df=h-a;return`<tr><td>${l.emoji||''} ${l.nome}${isCopao(l.nome)?' <span class="badge badge-orange" title="Calculado pelo pool de Bally/Gin/Gelo; histórico só a partir da atualização">calc.</span>':''}</td><td style="text-align:center;font-weight:700">${a}</td><td style="text-align:center">${h}</td><td style="text-align:center;color:${df>0?'var(--green)':df<0?'var(--red)':'var(--text2)'}">${df>0?'+':''}${df}</td></tr>`;}).join('')||'<tr><td colspan="4" style="text-align:center;color:var(--text2)">Nada pra mostrar.</td></tr>'}
+  </tbody></table></div>`;
+}
+function imprimirEstoquePorData(){
+  const D=window._epdDados;if(!D)return;const diaBR=D.dia.split('-').reverse().join('/');
+  const L=D.linhas.filter(l=>Number(l.estoque_na_data)!==0);
+  const html=`<div class="comprovante"><h2>🍺 MALTE DISTRIBUIDORA</h2><div style="text-align:center;font-size:13px;font-weight:700;margin-bottom:6px">ESTOQUE — FIM DO DIA ${diaBR}</div><div class="linha"></div>
+  ${L.map(l=>`<div class="item"><span>${l.nome}</span><span>${Number(l.estoque_na_data)}</span></div>`).join('')}<div class="linha"></div>
+  <div style="text-align:center;font-size:10px">Gerado em ${fmtDateFull(new Date())}</div></div>`;
+  const pa=document.getElementById('print-area');if(!pa)return;pa.innerHTML=html;pa.style.display='block';window.print();pa.style.display='none';pa.innerHTML='';
 }
 async function abrirEntrada(){
   const{data:P}=await sb.from('produtos').select('*').order('nome');
@@ -1779,7 +1871,7 @@ async function confirmarEntrada(){
 const COPAO_BALLY_ML=2000;   // 1 garrafa de Bally = 2000ml
 const COPAO_GIN_ML=900;      // 1 garrafa de Gin = 900ml
 const COPAO_CONSUMO_BALLY=200; // ml de Bally por copão
-const COPAO_CONSUMO_GIN_NORMAL=100; // ml de Gin por copão (sem promoção)
+const COPAO_CONSUMO_GIN_NORMAL=50; // ml de Gin por copão (dose real usada: 50ml)
 const COPAO_CONSUMO_GIN_PROMO=50;   // ml de Gin por copão (com promoção ativa)
 const COPAO_CONSUMO_GELO=1; // unidades de gelo de sabor por copão
 
@@ -1812,7 +1904,11 @@ async function sincronizarEstoqueCopao(){
     if(!copaoProd)return; // produto "Copão" ainda não foi criado em Produtos
     const ce=await getCopaoEstoqueRow();
     const disponiveis=copaoCalcularDisponiveis(ce,copaoProd);
-    await sb.from('produtos').update({estoque:disponiveis}).eq('id',copaoProd.id);
+    const delta=disponiveis-(Number(copaoProd.estoque)||0);
+    if(delta===0)return;
+    // passa pelo histórico (estoque_mov) pra aparecer no "Estoque por data"
+    try{await ajustarEstoque(copaoProd.id,delta,'copao (calculado)');}
+    catch(e){await sb.from('produtos').update({estoque:disponiveis}).eq('id',copaoProd.id);}
   }catch(e){console.error('Erro ao sincronizar estoque do Copão:',e);}
 }
 
@@ -1826,35 +1922,32 @@ async function ajustarCopaoAtomico(dBally,dGin,dGelo){
   if(e2)throw e2;return true;
 }
 async function consumirComponentesCopao(qty){
-  try{
-    const copaoProd=await getCopaoProduto();
-    const ginPorUn=copaoGinPorUnidade(copaoProd);
-    await ajustarCopaoAtomico(-COPAO_CONSUMO_BALLY*qty,-ginPorUn*qty,-COPAO_CONSUMO_GELO*qty);
-    await sincronizarEstoqueCopao();
-  }catch(e){avisarFalhaEstoque('Copão',e);}
+  const copaoProd=await getCopaoProduto();
+  const ginPorUn=copaoGinPorUnidade(copaoProd);
+  await ajustarCopaoAtomico(-COPAO_CONSUMO_BALLY*qty,-ginPorUn*qty,-COPAO_CONSUMO_GELO*qty);
+  await sincronizarEstoqueCopao();
 }
 async function devolverComponentesCopao(qty){
-  try{
-    const copaoProd=await getCopaoProduto();
-    const ginPorUn=copaoGinPorUnidade(copaoProd);
-    await ajustarCopaoAtomico(COPAO_CONSUMO_BALLY*qty,ginPorUn*qty,COPAO_CONSUMO_GELO*qty);
-    await sincronizarEstoqueCopao();
-  }catch(e){avisarFalhaEstoque('Copão',e);}
+  const copaoProd=await getCopaoProduto();
+  const ginPorUn=copaoGinPorUnidade(copaoProd);
+  await ajustarCopaoAtomico(COPAO_CONSUMO_BALLY*qty,ginPorUn*qty,COPAO_CONSUMO_GELO*qty);
+  await sincronizarEstoqueCopao();
 }
 
 // Ajuste ATÔMICO de estoque: soma/subtrai direto no banco (evita uma operação apagar a outra quando acontecem ao mesmo tempo)
-async function ajustarEstoque(prodId,delta,origem){
-  let r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta,p_origem:origem||null});
-  if(r.error&&/PGRST202|Could not find/i.test((r.error.code||'')+' '+(r.error.message||''))){
-    r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta}); // função antiga (sem origem)
-  }
+async function ajustarEstoque(prodId,delta,origem,chave){
+  const naoAchou=err=>err&&/PGRST202|Could not find/i.test((err.code||'')+' '+(err.message||''));
+  // função nova (com chave anti-duplicação) → antiga com origem → antiga sem origem
+  let r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta,p_origem:origem||null,p_chave:chave||null});
+  if(naoAchou(r.error))r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta,p_origem:origem||null});
+  if(naoAchou(r.error))r=await sb.rpc('ajustar_estoque',{p_id:prodId,p_delta:delta});
   if(!r.error)return r.data;
   const error=r.error;
   if(!/ajustar_estoque|PGRST202|Could not find/i.test((error.code||'')+' '+(error.message||'')))throw error;
-  // fallback (função ainda não criada no Supabase): método antigo
+  // fallback (função não existe no Supabase): método antigo, sem travar no zero
   const{data:p,error:e1}=await sb.from('produtos').select('estoque').eq('id',prodId).single();
   if(e1)throw e1;
-  const novo=Math.max(0,(p.estoque||0)+delta);
+  const novo=(p.estoque||0)+delta;
   const{error:e2}=await sb.from('produtos').update({estoque:novo}).eq('id',prodId);
   if(e2)throw e2;
   return novo;
@@ -1863,28 +1956,50 @@ let _ultimoAvisoEstoque=0;
 function avisarFalhaEstoque(nome,e){
   console.error('FALHA ESTOQUE',nome,e);
   if(Date.now()-_ultimoAvisoEstoque<30000)return;_ultimoAvisoEstoque=Date.now();
-  alert('⚠️ O ESTOQUE de '+(nome||'um produto')+' NÃO foi atualizado.\n'+(e&&e.message?e.message:e)+'\n\nA venda foi registrada. Me avise (Jarvis) se isso aparecer.');
+  alert('⚠️ O estoque de '+(nome||'um produto')+' não foi atualizado agora (internet?).\n'+(e&&e.message?e.message:e)+'\n\nA venda foi registrada e o sistema GUARDOU a baixa: ele tenta de novo sozinho a cada minuto. Não precisa lançar de novo.');
 }
-// Helpers genéricos usados por TODAS as rotinas de venda (mesa, balcão, festa):
+// Movimentos de estoque que falharam ficam guardados neste aparelho e são reenviados sozinhos
+const ESTOQUE_PEND_KEY='malte_estoque_pendente';
+function lerPendEstoque(){try{return JSON.parse(localStorage.getItem(ESTOQUE_PEND_KEY)||'[]');}catch(e){return[];}}
+function salvarPendEstoque(l){try{localStorage.setItem(ESTOQUE_PEND_KEY,JSON.stringify(l));}catch(e){}}
+function novaChaveMov(){return 'mv-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9);}
+async function aplicarMovEstoque(prodId,delta,origem,chave){
+  const{data:p,error}=await sb.from('produtos').select('*').eq('id',prodId).single();
+  if(error)throw error;if(!p)return null;
+  if(isCopao(p.nome)){if(delta<0)await consumirComponentesCopao(-delta);else await devolverComponentesCopao(delta);return p;}
+  await ajustarEstoque(prodId,delta,origem,chave);return p;
+}
+async function movEstoqueSeguro(prodId,delta,origem){
+  if(!prodId||!delta)return;
+  const chave=novaChaveMov();let nome='';let ult=null;
+  // até 3 tentativas; a chave impede que uma tentativa repetida desconte duas vezes
+  for(let t=0;t<3;t++){
+    try{const p=await aplicarMovEstoque(prodId,delta,origem,chave);return p;}
+    catch(e){ult=e;await new Promise(res=>setTimeout(res,700*(t+1)));}
+  }
+  try{const{data:p}=await sb.from('produtos').select('nome').eq('id',prodId).maybeSingle();nome=p?p.nome:'';}catch(e){}
+  const l=lerPendEstoque();l.push({prodId,delta,origem:origem||null,chave,nome,quando:new Date().toISOString()});salvarPendEstoque(l);
+  avisarFalhaEstoque(nome,ult);
+}
+let _pendEstoqueRodando=false;
+async function processarPendEstoque(){
+  if(_pendEstoqueRodando||typeof sb==='undefined')return;
+  let l=lerPendEstoque();if(!l.length)return;
+  _pendEstoqueRodando=true;
+  try{
+    while(l.length){
+      const m=l[0];
+      try{await aplicarMovEstoque(m.prodId,m.delta,(m.origem||'')+' (reenviado)',m.chave);}
+      catch(e){console.warn('Pendência de estoque ainda não enviada',e);break;}
+      l.shift();salvarPendEstoque(l);
+    }
+  }finally{_pendEstoqueRodando=false;}
+}
+setTimeout(processarPendEstoque,5000);setInterval(processarPendEstoque,60000);
+// Helpers genéricos usados por TODAS as rotinas (mesa, balcão, festa, consumo, perdas):
 // decidem sozinhos se o produto é o Copão (desconta dos componentes) ou um produto comum (desconta do próprio estoque)
-async function descontarEstoqueItem(prodId,qty,origem){
-  let nome='';
-  try{
-    const{data:p,error}=await sb.from('produtos').select('*').eq('id',prodId).single();
-    if(error)throw error;if(!p)return;nome=p.nome;
-    if(isCopao(p.nome)){await consumirComponentesCopao(qty);return;}
-    await ajustarEstoque(prodId,-qty,origem);
-  }catch(e){avisarFalhaEstoque(nome,e);}
-}
-async function devolverEstoqueItem(prodId,qty,origem){
-  let nome='';
-  try{
-    const{data:p,error}=await sb.from('produtos').select('*').eq('id',prodId).single();
-    if(error)throw error;if(!p)return;nome=p.nome;
-    if(isCopao(p.nome)){await devolverComponentesCopao(qty);return;}
-    await ajustarEstoque(prodId,qty,origem);
-  }catch(e){avisarFalhaEstoque(nome,e);}
-}
+async function descontarEstoqueItem(prodId,qty,origem){await movEstoqueSeguro(prodId,-qty,origem);}
+async function devolverEstoqueItem(prodId,qty,origem){await movEstoqueSeguro(prodId,qty,origem);}
 
 async function renderCopao(){
   const copaoProd=await getCopaoProduto();
@@ -2258,8 +2373,9 @@ ${qty}x ${prod.nome} adicionado ao estoque geral.`);
 }
 async function removerEntradaBruno(id,produto,qty){
   try{
-    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod)await ajustarEstoque(prod.id,-qty);
+    const prod=await acharProdutoPorNome(produto);
+    if(prod)await ajustarEstoque(prod.id,-qty,'entrada Bruno removida');
+    else alert(`⚠️ O produto "${produto}" não foi encontrado em Produtos — o estoque NÃO foi descontado. Ajuste na mão.`);
     await sb.from('entradas_bruno').delete().eq('id',id);
     try{await registrarLog('REMOVEU ENTRADA BRUNO',`${produto} -${qty} un`);}catch(e){}
     alert('✅ Entrada removida. Estoque ajustado.');
@@ -2316,9 +2432,9 @@ async function confirmarEditarProduto(id){try{const nome=document.getElementById
   const elEst=document.getElementById('ep-estoque');const estDigitado=parseInt(elEst.value);const estOriginal=parseInt(elEst.getAttribute('data-original'));
   const upd={nome,cat:document.getElementById('ep-cat').value,emoji:document.getElementById('ep-emoji').value||'📦',custo:parseFloat(document.getElementById('ep-custo').value)||0,preco:parseFloat(document.getElementById('ep-preco').value)||0};
   const mudouEstoque=!isNaN(estDigitado)&&estDigitado!==estOriginal;
-  if(mudouEstoque){if(!confirm(`Alterar o estoque de ${nome} de ${estOriginal} para ${estDigitado}?`))return;upd.estoque=estDigitado;}
+  if(mudouEstoque){if(!confirm(`Alterar o estoque de ${nome} de ${estOriginal} para ${estDigitado}?`))return;}
   const{error}=await sb.from('produtos').update(upd).eq('id',id);if(error){alert('Erro ao editar produto: '+error.message);return;}
-  if(mudouEstoque){try{await registrarLog('CORREÇÃO ESTOQUE',`${nome}: ${estOriginal} → ${estDigitado}`);}catch(e){}}
+  if(mudouEstoque){const{data:pa}=await sb.from('produtos').select('estoque').eq('id',id).single();const dEst=estDigitado-((pa&&pa.estoque)||0);if(dEst)await ajustarEstoque(id,dEst,'correção manual');try{await registrarLog('CORREÇÃO ESTOQUE',`${nome}: ${estOriginal} → ${estDigitado}`);}catch(e){}}
   closeModal();renderProdutos();if(isCopao(nome))await sincronizarEstoqueCopao();}catch(e){alert('Erro: '+e.message);}}
 async function removerProduto(id){try{const{error}=await sb.from('produtos').delete().eq('id',id);if(error){alert('Erro ao remover produto: '+error.message);return;}renderProdutos();}catch(e){alert('Erro: '+e.message);}}
 async function gerenciarPromocoes(){const{data:P}=await sb.from('produtos').select('*').order('nome');openModal(`<h3>&#128293; Gerenciar Promoções</h3><div style="max-height:380px;overflow-y:auto;">${(P||[]).map(p=>`<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px;margin-bottom:7px;border:1px solid ${p.em_promo?'rgba(192,57,43,0.4)':'var(--border)'};"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;"><div style="font-size:13px;font-weight:600">${p.emoji} ${p.nome}${isCopao(p.nome)?' <span style="font-size:10px;color:var(--gold2)">(Gin cai pra 50ml no copão)</span>':''}</div><div style="font-size:11px;color:var(--text2)">Normal: ${fmt(p.preco)}</div></div><div style="display:flex;align-items:center;gap:7px;"><input type="number" id="promo-${p.id}" value="${p.preco_promo||p.preco}" step="0.01" style="width:90px;padding:5px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;"><button class="btn ${p.em_promo?'btn-danger':'btn-orange'} btn-xs" onclick="togglePromo(${p.id},${!p.em_promo})">${p.em_promo?'Desativar':'Ativar'}</button></div></div>`).join('')}</div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);}
@@ -2439,33 +2555,44 @@ function montarTabelaCompras(compras,totalGasto,totalPend,labelPeriodo){
     </table></div>`}`;
 }
 
+async function acharProdutoPorNome(nome){
+  const{data,error}=await sb.from('produtos').select('*').ilike('nome',String(nome||'').trim());
+  if(error)throw error;return(data||[])[0]||null;
+}
 async function alterarStatusCompra(id,novoStatus,statusAtual,qty,produto){
   if(novoStatus===statusAtual)return;
   const msgs={recebido:'Marcar como RECEBIDO? O estoque será atualizado.',cancelado:'Marcar como CANCELADO?',pendente:'Voltar para PENDENTE?'};
   if(!confirm(msgs[novoStatus]||'Confirmar?')){carregarComprasDia();return;}
-  await sb.from('compras').update({status:novoStatus}).eq('id',id);
-  // Recebido → soma estoque
-  if(novoStatus==='recebido'&&statusAtual!=='recebido'){
-    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod){
-      await ajustarEstoque(prod.id,qty);
-      try{await sb.from('entradas').insert({produto:prod.nome,qty,custo:0,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA]'});}catch(e){}
+  if(window._statusCompraLock)return;window._statusCompraLock=true;
+  try{
+    // lê o status REAL no banco (evita somar duas vezes se outro aparelho já mudou)
+    const{data:c,error:eC}=await sb.from('compras').select('*').eq('id',id).single();if(eC)throw eC;
+    const atual=c.status;if(atual===novoStatus)return;
+    const{data:mud,error:eU}=await sb.from('compras').update({status:novoStatus}).eq('id',id).eq('status',atual).select();
+    if(eU)throw eU;if(!mud||!mud.length){alert('Essa compra acabou de ser alterada em outro aparelho. Confira a lista.');return;}
+    const prod=await acharProdutoPorNome(c.produto);
+    if(novoStatus==='recebido'&&atual!=='recebido'){
+      if(!prod){alert(`⚠️ O produto "${c.produto}" não foi encontrado em Produtos.\nA compra ficou como RECEBIDA, mas o ESTOQUE NÃO FOI SOMADO.\nLance pela "Entrada de Estoque".`);}
+      else{
+        await ajustarEstoque(prod.id,c.qty,'compra recebida');
+        try{await sb.from('entradas').insert({produto:prod.nome,qty:c.qty,custo:0,operador:currentUser.nome,observacao:'[COMPRA RECEBIDA]'});}catch(e){}
+      }
     }
-  }
-  // De recebido para outro → desconta estoque
-  if(statusAtual==='recebido'&&novoStatus!=='recebido'){
-    const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-    if(prod)await ajustarEstoque(prod.id,-qty);
-  }
-  carregarComprasDia();
+    if(atual==='recebido'&&novoStatus!=='recebido'){
+      if(!prod)alert(`⚠️ O produto "${c.produto}" não foi encontrado em Produtos — o estoque NÃO foi descontado. Ajuste na mão.`);
+      else await ajustarEstoque(prod.id,-c.qty,'compra desfeita ('+novoStatus+')');
+    }
+  }catch(e){alert('Erro ao alterar a compra: '+e.message);}
+  finally{window._statusCompraLock=false;carregarComprasDia();}
 }
 
 async function excluirCompra(id,status,qty,produto){
   if(!confirm('Excluir esta compra? Se estiver como RECEBIDO, o estoque será descontado.'))return;
   try{
     if(status==='recebido'){
-      const{data:prod}=await sb.from('produtos').select('*').ilike('nome',produto).maybeSingle();
-      if(prod)await ajustarEstoque(prod.id,-qty);
+      const prod=await acharProdutoPorNome(produto);
+      if(prod)await ajustarEstoque(prod.id,-qty,'compra excluída');
+      else alert(`⚠️ O produto "${produto}" não foi encontrado em Produtos — o estoque NÃO foi descontado. Ajuste na mão.`);
     }
     const{error}=await sb.from('compras').delete().eq('id',id);
     if(error){alert('Erro ao excluir: '+error.message);return;}
@@ -3027,7 +3154,7 @@ async function editarLancFunc(id){
     const dia=l.tipo==='dia'||l.tipo==='festa';
     openModal(`<h3>✏ Editar lançamento — ${escFunc(l.funcionario)}</h3>
     ${dia?`<div class="modal-field"><label>Tipo</label><select id="fe-tipo"><option value="dia" ${l.tipo==='dia'?'selected':''}>📅 Normal — ${fmt(DIARIA_NORMAL)}</option><option value="festa" ${l.tipo==='festa'?'selected':''}>🎉 Festa — ${fmt(DIARIA_FESTA)}</option></select></div>`
-    :`<div class="modal-field"><label>Descrição</label><input type="text" id="fe-desc" value="${escFunc(l.descricao)}"></div>
+    :`<div class="modal-field"><label>Descrição</label><input type="text" id="fe-desc" value="${escFunc(l.descricao)}"></div>${l.prod_id?`<div class="modal-field"><label>Quantidade (ajusta o estoque)</label><input type="number" id="fe-qty" min="1" value="${l.qty||1}"></div>`:''}
     <div class="modal-field"><label>Valor (R$)</label><input type="number" id="fe-valor" step="0.01" value="${Number(l.valor).toFixed(2)}"></div>`}
     <div class="modal-field"><label>Data</label><input type="date" id="fe-data" value="${l.data}"></div>
     <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarEdicaoLancFunc(${id},${dia})">Salvar</button></div>`);
@@ -3038,8 +3165,13 @@ async function salvarEdicaoLancFunc(id,dia){
   if(dia){const t=document.getElementById('fe-tipo').value;upd.tipo=t;upd.descricao=t==='festa'?'Dia de festa':'Diária';upd.valor=t==='festa'?DIARIA_FESTA:DIARIA_NORMAL;}
   else{upd.descricao=document.getElementById('fe-desc').value.trim();upd.valor=parseFloat(document.getElementById('fe-valor').value)||0;if(!upd.descricao||upd.valor<=0){alert('Preencha descrição e valor.');return;}}
   try{
+    const{data:antes}=await sb.from('func_lancamentos').select('*').eq('id',id).single();
+    const elQ=document.getElementById('fe-qty');let difQ=0;
+    if(!dia&&elQ&&antes&&antes.prod_id){const nq=Math.max(1,parseInt(elQ.value)||1);difQ=nq-(antes.qty||1);if(difQ)upd.qty=nq;}
     const{error}=await sb.from('func_lancamentos').update(upd).eq('id',id);if(error){alert('Erro ao salvar: '+error.message);return;}
-    registrarLog('Editou lançamento funcionário',`#${id} ${upd.descricao} ${fmt(upd.valor)}`);
+    if(difQ>0)await descontarEstoqueItem(antes.prod_id,difQ,'edição consumo funcionário');
+    if(difQ<0)await devolverEstoqueItem(antes.prod_id,-difQ,'edição consumo funcionário');
+    registrarLog('Editou lançamento funcionário',`#${id} ${upd.descricao} ${fmt(upd.valor)}${difQ?' (qtd '+(difQ>0?'+':'')+difQ+')':''}`);
     closeModal();renderFuncDetalhe(funcSel);
   }catch(e){alert('Erro: '+e.message);}
 }
@@ -3722,8 +3854,9 @@ async function excluirPerda(id,qty){
     const{data:perda}=await sb.from('perdas').select('*').eq('id',id).single();
     if(perda){
       // Estorna ao estoque
-      const{data:prod}=await sb.from('produtos').select('*').ilike('nome',perda.produto).maybeSingle();
-      if(prod)await devolverEstoqueItem(prod.id,qty);
+      const prod=await acharProdutoPorNome(perda.produto);
+      if(prod)await devolverEstoqueItem(prod.id,qty,'perda excluída');
+      else alert(`⚠️ O produto "${perda.produto}" não foi encontrado em Produtos — o estoque NÃO foi devolvido. Ajuste na mão.`);
       try{await registrarLog('EXCLUIU PERDA',`${perda.produto} +${qty} un (estorno)`);}catch(e){}
     }
     await sb.from('perdas').delete().eq('id',id);
