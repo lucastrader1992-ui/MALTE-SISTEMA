@@ -1111,6 +1111,8 @@ async function lancarMesaNoFuncionario(id){
 async function abrirMesa(id){await garantirMapaMesasFunc();const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(m.status==='livre'){openModal(`<h3>🍺 ${nomeMesa(id)}</h3><p style="color:var(--text2);font-size:13px;margin-bottom:18px">Abrir ${funcDaMesa(id)?'a mesa de '+escFunc(funcDaMesa(id))+'? O que for lançado aqui vai pro consumo dele(a).':'a mesa '+id+'?'}</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button></div>`);}else{await modalMesaAberta(id);}}
 async function confirmarAbrirMesa(id){try{const{error}=await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);if(error){alert('Erro ao abrir mesa: '+error.message);return;}closeModal();renderMesas();}catch(e){alert('Erro: '+e.message);}}
 async function modalMesaAberta(id){
+  // a tela da mesa sempre abre com "Dinheiro" marcado: zera a forma de pagamento da mesa anterior
+  payAtual='dinheiro';splitPagamentos=[];
   await garantirMapaMesasFunc();const funcM=funcDaMesa(id);
   const[{data:m},{data:itens},{data:prods}]=await Promise.all([sb.from('mesas').select('*').eq('id',id).single(),sb.from('mesa_itens').select('*').eq('mesa_id',id),sb.from('produtos').select('*').order('nome')]);
   const I=itens||[];const total=I.reduce((s,i)=>s+Number(i.preco)*i.qty,0);const pagoParcial=m.pago_parcial||0;const restante=total-pagoParcial;
@@ -1283,6 +1285,7 @@ async function fecharMesaVenda(id){
     const{error:eDel}=await sb.from('mesa_itens').delete().eq('mesa_id',id);
     const{error:eLib}=await sb.from('mesas').update({status:'livre',aberta_em:null,pago_parcial:0}).eq('id',id);
     if(eDel||eLib)alert('⚠️ A venda foi registrada, mas a mesa não foi liberada direito ('+((eDel||eLib).message)+').\nNÃO feche de novo (duplicaria a venda). Me avise (Jarvis).');
+    payAtual='dinheiro';splitPagamentos=[];
     if(venda&&valorFinal>0)await verComprovante(venda.id);else closeModal();
     renderMesas();
   }catch(e){console.error(e);alert('Erro ao fechar mesa: '+e.message);}
