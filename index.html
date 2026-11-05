@@ -465,7 +465,7 @@ function closeSenha(){document.getElementById('senha-overlay').classList.remove(
 
 function goTab(tab){
   stopMesaPolling();stopEstoquePolling();stopGlobalPolling();stopFestaPolling();stopDashboardPolling();currentTab=tab;
-  verificarCaixaPendente().then(()=>lembrarAbrirCaixa(tab));
+  verificarCaixaPendente();
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{const t=b.getAttribute('onclick')||'';if(t.includes("'"+tab+"'"))b.classList.add('active');});
   document.getElementById('tab-content').innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
@@ -1043,7 +1043,7 @@ async function gerarPDFCaixaDiaEspecifico(dataStr){
   }catch(e){alert('Erro ao gerar PDF do dia: '+e.message);}
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
-async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));try{await registrarLog('ABERTURA CAIXA',`Troco inicial: ${fmt(troco)}`);}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
+async function confirmarAbrirCaixa(){window._cxCache=null;try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));try{await registrarLog('ABERTURA CAIXA',`Troco inicial: ${fmt(troco)}`);}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
 // ══════════════════════════════════════════════
 // 🔒 FECHAMENTO DE CAIXA com contagem da gaveta + histórico (caixa_fechamentos)
 // ══════════════════════════════════════════════
@@ -1136,7 +1136,7 @@ async function confirmarFecharCaixa(){
     const abrPrevia=b.abertura||null;
     const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});
     if(error){alert('Erro ao fechar caixa: '+error.message);return;}
-    caixaAberto=null;try{localStorage.removeItem('malte_caixa');}catch(e){}
+    caixaAberto=null;window._cxCache=null;try{localStorage.removeItem('malte_caixa');}catch(e){}
     try{await registrarLog('FECHAMENTO CAIXA',`${abrPrevia?'Aberto desde '+fmtDateFull(abrPrevia)+' — ':''}esperado ${fmt(v.esperado)}, contado ${fmt(v.contado)}, diferença ${fmt(v.diferenca)}`);}catch(e){}
     closeModal();esconderLembreteCaixa();await verificarCaixaPendente();
     if(currentTab==='caixa')renderCaixa();
@@ -1206,6 +1206,21 @@ async function lembrarAbrirCaixa(tab){
     if(confirm('⚠️ O CAIXA ESTÁ FECHADO.\n\nAbrir o caixa agora (com o troco inicial)?')){goTab('caixa');setTimeout(abrirCaixa,400);}
   }catch(e){console.warn('lembrarAbrirCaixa',e);}
 }
+// 🔐 Vender só com caixa aberto (mesas de funcionário e festa ficam liberadas)
+async function exigirCaixaAberto(){
+  const c=window._cxCache;if(c&&c.ok&&Date.now()-c.ts<30000)return true;
+  try{
+    const{data:cs,error}=await sb.from('caixa_status').select('aberto,abertura').eq('id',1).maybeSingle();
+    if(error)return true; // sem conexão: não trava a venda
+    if(cs&&cs.aberto){
+      if(cs.abertura&&new Date(cs.abertura)<getDiaComercial().inicio){verificarCaixaPendente();return false;}
+      window._cxCache={ok:true,ts:Date.now()};return true;
+    }
+  }catch(e){return true;}
+  window._cxCache=null;
+  if(confirm('🔒 O CAIXA ESTÁ FECHADO.\n\nPra vender é preciso abrir o caixa (com o troco inicial).\n\nAbrir o caixa agora?')){closeModal();goTab('caixa');setTimeout(abrirCaixa,400);}
+  return false;
+}
 setInterval(verificarCaixaPendente,60000);
 setInterval(lembrarFecharCaixa,5*60000);
 async function verComprovante(vendaId){
@@ -1266,7 +1281,7 @@ async function lancarMesaNoFuncionario(id){
   finally{window._fechandoMesa=false;renderMesas();lembrarFecharCaixa();}
 }
 async function abrirMesa(id){await garantirMapaMesasFunc();const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(m.status==='livre'){openModal(`<h3>🍺 ${nomeMesa(id)}</h3><p style="color:var(--text2);font-size:13px;margin-bottom:18px">Abrir ${funcDaMesa(id)?'a mesa de '+escFunc(funcDaMesa(id))+'? O que for lançado aqui vai pro consumo dele(a).':'a mesa '+id+'?'}</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button></div>`);}else{await modalMesaAberta(id);}}
-async function confirmarAbrirMesa(id){try{const{error}=await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);if(error){alert('Erro ao abrir mesa: '+error.message);return;}closeModal();renderMesas();}catch(e){alert('Erro: '+e.message);}}
+async function confirmarAbrirMesa(id){try{if(!funcDaMesa(id)&&!(await exigirCaixaAberto()))return;const{error}=await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);if(error){alert('Erro ao abrir mesa: '+error.message);return;}closeModal();renderMesas();}catch(e){alert('Erro: '+e.message);}}
 async function modalMesaAberta(id){
   // a tela da mesa sempre abre com "Dinheiro" marcado: zera a forma de pagamento da mesa anterior
   payAtual='dinheiro';splitPagamentos=[];
@@ -1315,6 +1330,7 @@ function enfileirarMesa(mesaId,fn){
 }
 function mesaToast(msg,cor){let t=document.getElementById('mesa-toast');if(!t){t=document.createElement('div');t.id='mesa-toast';t.style.cssText='position:fixed;left:50%;bottom:24px;transform:translateX(-50%);color:#fff;padding:10px 18px;border-radius:999px;font-weight:700;font-size:15px;z-index:99999;box-shadow:0 4px 14px rgba(0,0,0,.4);transition:opacity .2s;pointer-events:none';document.body.appendChild(t);}t.style.background=cor||'#16a34a';t.textContent=msg;t.style.opacity='1';clearTimeout(window._mesaToastT);window._mesaToastT=setTimeout(()=>{t.style.opacity='0';},1200);}
 async function _addItemMesaCore(mesaId,pid,qty,precoForcado){
+  if(!funcDaMesa(mesaId)&&!(await exigirCaixaAberto()))return;
   const{data:prod,error:eP}=await sb.from('produtos').select('*').eq('id',pid).single();if(eP)throw eP;if(!prod)return;
   if(await bloquearSemEstoque(prod,qty))return;
   const preco=precoForcado!=null&&!isNaN(precoForcado)?precoForcado:(prod.em_promo&&prod.preco_promo?prod.preco_promo:prod.preco);
@@ -1492,6 +1508,7 @@ async function atualizarBadgesEstoqueBalcao(){
 }
 setInterval(()=>{if(typeof currentTab!=='undefined'&&currentTab==='balcao'&&!modalAberto())atualizarCarrinhoBalcaoUI();},3000);
 async function addBalcao(pid,nome,preco,emoji){
+  if(!(await exigirCaixaAberto()))return;
   const nomeFull=emoji+' '+nome;
   // mostra na hora
   const e=balcaoItens.find(i=>i.prodId===pid&&i.preco===Number(preco));if(e)e.qty++;else balcaoItens.push({prodId:pid,nome:nomeFull,preco:Number(preco),qty:1,rows:[]});
