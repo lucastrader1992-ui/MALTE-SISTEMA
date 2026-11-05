@@ -465,6 +465,7 @@ function closeSenha(){document.getElementById('senha-overlay').classList.remove(
 
 function goTab(tab){
   stopMesaPolling();stopEstoquePolling();stopGlobalPolling();stopFestaPolling();stopDashboardPolling();currentTab=tab;
+  verificarCaixaPendente().then(()=>lembrarAbrirCaixa(tab));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>{const t=b.getAttribute('onclick')||'';if(t.includes("'"+tab+"'"))b.classList.add('active');});
   document.getElementById('tab-content').innerHTML='<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>';
@@ -776,7 +777,7 @@ async function renderCaixa(){
   document.getElementById('tab-content').innerHTML=`
   <div class="caixa-status ${caixaAberto?'caixa-aberto':'caixa-fechado'}">
     <div><div style="font-size:15px;font-weight:700">${caixaAberto?'🟢 Caixa Aberto':'🔴 Caixa Fechado'}</div>${caixaAberto?`<div style="font-size:12px;color:var(--text2);margin-top:3px">Aberto às ${fmtDateFull(caixaAberto.abertura)} | Troco: ${fmt(caixaAberto.troco)}</div>`:''}</div>
-    <div style="display:flex;gap:7px;">${caixaAberto?`<button class="btn btn-danger btn-sm" onclick="fecharCaixa()">🔒 Fechar Caixa</button>`:`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}</div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" onclick="verFechamentosCaixa()">📋 Fechamentos</button>${caixaAberto?`<button class="btn btn-danger btn-sm" onclick="fecharCaixa()">🔒 Fechar Caixa</button>`:`<button class="btn btn-green btn-sm" onclick="abrirCaixa()">Abrir Caixa</button>`}</div>
   </div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
     <span style="font-size:13px;font-weight:600;color:var(--gold2)">📅 Consultar dia:</span>
@@ -1043,14 +1044,170 @@ async function gerarPDFCaixaDiaEspecifico(dataStr){
 }
 function abrirCaixa(){openModal(`<h3>💰 Abrir Caixa</h3><div class="modal-field"><label>Troco Inicial (R$)</label><input type="number" id="troco-inicial" value="0" step="0.01" min="0"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirCaixa()">Abrir Caixa</button></div>`);}
 async function confirmarAbrirCaixa(){try{const troco=parseFloat(document.getElementById('troco-inicial').value)||0;const agora=new Date().toISOString();const{error}=await sb.from('caixa_status').upsert({id:1,aberto:true,abertura:agora,troco,operador:currentUser.nome});if(error){alert('Erro ao abrir caixa: '+error.message);return;}caixaAberto={abertura:agora,troco,operador:currentUser.nome};localStorage.setItem('malte_caixa',JSON.stringify(caixaAberto));try{await registrarLog('ABERTURA CAIXA',`Troco inicial: ${fmt(troco)}`);}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
-function fecharCaixa(){openModal(`<h3>🔒 Fechar Caixa</h3>
-<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px">
+// ══════════════════════════════════════════════
+// 🔒 FECHAMENTO DE CAIXA com contagem da gaveta + histórico (caixa_fechamentos)
+// ══════════════════════════════════════════════
+function parseDinheiroPag(pag,total){
+  const p=String(pag||'').trim();
+  if(/^dinheiro$/i.test(p))return Number(total)||0;
+  const m=p.match(/dinheiro\s*R\$\s*([\d.]+,\d{2})/i);
+  return m?parseFloat(m[1].replace(/\./g,'').replace(',','.')):0;
+}
+async function calcularEsperadoCaixa(){
+  const{data:cs}=await sb.from('caixa_status').select('*').eq('id',1).maybeSingle();
+  const abertura=cs&&cs.abertura?cs.abertura:getDiaComercial().inicio.toISOString();
+  const troco=Number(cs&&cs.troco)||0;
+  const[rV,rS,rVL]=await Promise.all([
+    sb.from('vendas').select('total,pagamento').gte('criado_em',abertura),
+    sb.from('saidas_caixa').select('valor').gte('criado_em',abertura),
+    sb.from('func_lancamentos').select('valor').eq('tipo','vale').gte('criado_em',abertura)]);
+  if(rV.error)throw rV.error;
+  const V=rV.data||[],S=rS.data||[],VL=rVL.data||[];
+  const vendasTotal=V.reduce((a,v)=>a+(Number(v.total)||0),0);
+  const dinheiro=V.reduce((a,v)=>a+parseDinheiroPag(v.pagamento,v.total),0);
+  const saidas=S.reduce((a,x)=>a+(Number(x.valor)||0),0);
+  const vales=VL.reduce((a,x)=>a+(Number(x.valor)||0),0);
+  return{abertura,troco,vendasTotal,dinheiro,saidas,vales};
+}
+async function fecharCaixa(){
+  openModal(`<h3>🔒 Fechar Caixa</h3><div class="empty"><div class="spinner" style="margin:0 auto"></div><p>Calculando o dinheiro da gaveta...</p></div>`);
+  let b;
+  try{b=await calcularEsperadoCaixa();}catch(e){openModal(`<h3>🔒 Fechar Caixa</h3><p style="color:var(--red)">Erro ao calcular: ${e.message}</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);return;}
+  window._fcBase=b;
+  const L=(rot,val,cor)=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:var(--text2)">${rot}</span><b style="color:${cor||'var(--text)'}">${val}</b></div>`;
+  openModal(`<h3>🔒 Fechar Caixa</h3>
+<div style="font-size:12px;color:var(--text2);margin-bottom:10px">Aberto desde ${fmtDateFull(b.abertura)} • Vendido no período: <b>${fmt(b.vendasTotal)}</b></div>
+<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px">
   <div style="font-size:13px;font-weight:700;margin-bottom:8px">🍔 Saída para comida</div>
-  <div class="modal-field"><label>Valor (R$) — deixe 0 se não teve</label><input type="number" id="fc-comida-valor" value="0" step="0.01" min="0"></div>
+  <div class="modal-field"><label>Valor (R$) — deixe 0 se não teve</label><input type="number" id="fc-comida-valor" value="0" step="0.01" min="0" oninput="atualizarDifCaixa()"></div>
   <div class="modal-field" style="margin-bottom:0"><label>Descrição (opcional)</label><input type="text" id="fc-comida-desc" placeholder="Ex: janta da equipe, lanche..."></div>
 </div>
-<p style="color:var(--text2);font-size:13px;margin-bottom:14px">Confirmar fechamento?</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" id="btn-fechar-caixa" onclick="confirmarFecharCaixa()">Fechar Caixa</button></div>`);}
-async function confirmarFecharCaixa(){if(window._fecharCaixaLock)return;const vC=document.getElementById('fc-comida-valor'),dC=document.getElementById('fc-comida-desc');const valorComida=vC?(parseFloat(vC.value)||0):0;const descComida=(dC&&dC.value.trim())||'Comida';if(valorComida<0){alert('Valor inválido.');return;}window._fecharCaixaLock=true;const bF=document.getElementById('btn-fechar-caixa');if(bF){bF.disabled=true;bF.textContent='Fechando...';}try{if(valorComida>0){const{error:eC}=await sb.from('saidas_caixa').insert({descricao:descComida,valor:valorComida,operador:currentUser.nome,categoria:'comida'});if(eC){alert('Erro ao lançar saída de comida: '+eC.message+'\n\nO caixa NÃO foi fechado.');return;}try{await registrarLog('SAÍDA COMIDA',`${descComida}: ${fmt(valorComida)}`);}catch(e){}}}finally{window._fecharCaixaLock=false;if(bF){bF.disabled=false;bF.textContent='Fechar Caixa';}}try{const abrPrevia=caixaAberto?caixaAberto.abertura:null;const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});if(error){alert('Erro ao fechar caixa: '+error.message);return;}caixaAberto=null;localStorage.removeItem('malte_caixa');try{await registrarLog('FECHAMENTO CAIXA',abrPrevia?`Aberto desde ${fmtDateFull(abrPrevia)}`:'Caixa fechado');}catch(e){}closeModal();renderCaixa();}catch(e){alert('Erro inesperado: '+e.message);}}
+<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px">
+  <div style="font-size:13px;font-weight:700;margin-bottom:6px">💵 Dinheiro que deve ter na gaveta</div>
+  ${L('Troco inicial',fmt(b.troco))}
+  ${L('+ Vendas em dinheiro',fmt(b.dinheiro),'var(--green)')}
+  ${L('− Saídas do caixa',fmt(b.saidas),'var(--red)')}
+  ${L('− Vales dos funcionários',fmt(b.vales),'var(--red)')}
+  <div id="fc-linha-comida"></div>
+  <div style="border-top:1px solid var(--border2);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;font-size:15px"><b>= Esperado</b><b id="fc-esperado" style="color:var(--gold2)"></b></div>
+</div>
+<div class="modal-field"><label>💵 Dinheiro CONTADO na gaveta (R$) — obrigatório</label><input type="number" id="fc-contado" step="0.01" min="0" placeholder="Conte o dinheiro e digite aqui" oninput="atualizarDifCaixa()" style="font-size:17px;font-weight:700"></div>
+<div id="fc-diferenca" style="font-size:14px;font-weight:700;margin:-4px 0 10px"></div>
+<div class="modal-field"><label>Observação (opcional)</label><input type="text" id="fc-obs" placeholder="Ex: R$ 20 de vale pago do caixa, troco deixado..."></div>
+<div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" id="btn-fechar-caixa" onclick="confirmarFecharCaixa()">Fechar Caixa</button></div>`);
+  atualizarDifCaixa();
+}
+function valoresFechamentoCaixa(){
+  const b=window._fcBase||{troco:0,dinheiro:0,saidas:0,vales:0};
+  const comida=parseFloat((document.getElementById('fc-comida-valor')||{}).value)||0;
+  const esperado=Math.round((b.troco+b.dinheiro-b.saidas-b.vales-comida)*100)/100;
+  const elC=document.getElementById('fc-contado');const temContado=elC&&elC.value!=='';
+  const contado=temContado?(parseFloat(elC.value)||0):null;
+  const diferenca=temContado?Math.round((contado-esperado)*100)/100:null;
+  return{comida,esperado,contado,diferenca};
+}
+function atualizarDifCaixa(){
+  const v=valoresFechamentoCaixa();
+  const lc=document.getElementById('fc-linha-comida');if(lc)lc.innerHTML=v.comida>0?`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:var(--text2)">− Comida (agora)</span><b style="color:var(--red)">${fmt(v.comida)}</b></div>`:'';
+  const e=document.getElementById('fc-esperado');if(e)e.textContent=fmt(v.esperado);
+  const d=document.getElementById('fc-diferenca');if(!d)return;
+  if(v.diferenca===null){d.innerHTML='';return;}
+  d.innerHTML=Math.abs(v.diferenca)<0.01?'<span style="color:var(--green)">✓ Bateu certinho</span>':v.diferenca>0?`<span style="color:var(--gold2)">Sobrando ${fmt(v.diferenca)}</span>`:`<span style="color:var(--red)">Faltando ${fmt(-v.diferenca)}</span>`;
+}
+async function confirmarFecharCaixa(){
+  if(window._fecharCaixaLock)return;
+  const vC=document.getElementById('fc-comida-valor'),dC=document.getElementById('fc-comida-desc');
+  const descComida=(dC&&dC.value.trim())||'Comida';
+  const v=valoresFechamentoCaixa();
+  if(v.comida<0){alert('Valor inválido.');return;}
+  if(v.contado===null){alert('Conte o dinheiro da gaveta e digite o valor em "Dinheiro CONTADO".');const el=document.getElementById('fc-contado');if(el)el.focus();return;}
+  if(Math.abs(v.diferenca)>=0.01&&!confirm(`${v.diferenca>0?'Sobrando':'Faltando'} ${fmt(Math.abs(v.diferenca))} na gaveta.\n\nEsperado: ${fmt(v.esperado)}\nContado: ${fmt(v.contado)}\n\nFechar o caixa mesmo assim?`))return;
+  const obs=((document.getElementById('fc-obs')||{}).value||'').trim();
+  window._fecharCaixaLock=true;const bF=document.getElementById('btn-fechar-caixa');if(bF){bF.disabled=true;bF.textContent='Fechando...';}
+  try{
+    if(v.comida>0){
+      const{error:eC}=await sb.from('saidas_caixa').insert({descricao:descComida,valor:v.comida,operador:currentUser.nome,categoria:'comida'});
+      if(eC){alert('Erro ao lançar saída de comida: '+eC.message+'\n\nO caixa NÃO foi fechado.');return;}
+      try{await registrarLog('SAÍDA COMIDA',`${descComida}: ${fmt(v.comida)}`);}catch(e){}
+    }
+    const b=window._fcBase||{};
+    const{error:eH}=await sb.from('caixa_fechamentos').insert({abertura:b.abertura||null,troco:b.troco||0,vendas_total:b.vendasTotal||0,vendas_dinheiro:b.dinheiro||0,saidas:(b.saidas||0)+v.comida,vales:b.vales||0,esperado:v.esperado,contado:v.contado,diferenca:v.diferenca,operador:currentUser.nome,obs:obs||null});
+    if(eH)alert('⚠️ O histórico do fechamento não foi salvo ('+eH.message+'), mas o caixa vai ser fechado. Anote: esperado '+fmt(v.esperado)+', contado '+fmt(v.contado)+'.');
+    const abrPrevia=b.abertura||null;
+    const{error}=await sb.from('caixa_status').upsert({id:1,aberto:false,abertura:null,troco:0,operador:currentUser.nome});
+    if(error){alert('Erro ao fechar caixa: '+error.message);return;}
+    caixaAberto=null;try{localStorage.removeItem('malte_caixa');}catch(e){}
+    try{await registrarLog('FECHAMENTO CAIXA',`${abrPrevia?'Aberto desde '+fmtDateFull(abrPrevia)+' — ':''}esperado ${fmt(v.esperado)}, contado ${fmt(v.contado)}, diferença ${fmt(v.diferenca)}`);}catch(e){}
+    closeModal();esconderLembreteCaixa();await verificarCaixaPendente();
+    if(currentTab==='caixa')renderCaixa();
+  }catch(e){alert('Erro inesperado: '+e.message);}
+  finally{window._fecharCaixaLock=false;if(bF){bF.disabled=false;bF.textContent='Fechar Caixa';}}
+}
+async function verFechamentosCaixa(){
+  openModal(`<h3>📋 Fechamentos de caixa</h3><div class="empty"><div class="spinner" style="margin:0 auto"></div></div>`);
+  const{data,error}=await sb.from('caixa_fechamentos').select('*').order('fechamento',{ascending:false}).limit(30);
+  if(error){openModal(`<h3>📋 Fechamentos de caixa</h3><p style="color:var(--red)">Erro: ${error.message}</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);return;}
+  const F=data||[];
+  openModal(`<h3>📋 Fechamentos de caixa</h3>
+  <div class="table-wrap" style="max-height:60vh;overflow:auto"><table><thead><tr><th>Fechado em</th><th>Esperado</th><th>Contado</th><th>Diferença</th><th>Quem</th></tr></thead><tbody>
+  ${F.map(f=>{const d=Number(f.diferenca)||0;return`<tr title="${(f.obs||'').replace(/"/g,'&quot;')}"><td style="font-size:12px">${fmtDateFull(f.fechamento)}${f.abertura?`<div style="color:var(--text2);font-size:10px">aberto ${fmtDateFull(f.abertura)}</div>`:''}</td><td>${fmt(f.esperado)}</td><td>${f.contado!=null?fmt(f.contado):'—'}</td><td style="font-weight:700;color:${Math.abs(d)<0.01?'var(--green)':d>0?'var(--gold2)':'var(--red)'}">${Math.abs(d)<0.01?'✓':(d>0?'+':'−')+fmt(Math.abs(d))}</td><td style="font-size:12px">${f.operador||''}${f.obs?' 📝':''}</td></tr>`;}).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text2)">Nenhum fechamento registrado ainda.</td></tr>'}
+  </tbody></table></div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>`);
+}
+
+// ══════════════════════════════════════════════
+// 🚨 TRAVA: caixa de um dia anterior ainda aberto → bloqueia até fechar
+// 🌙 LEMBRETE: de madrugada, com todas as mesas fechadas → sugere fechar o caixa
+// 🔔 AVISO: caixa fechado ao entrar em Mesas/Balcão/Festa → oferece abrir
+// ══════════════════════════════════════════════
+const CAIXA_LEMBRETE_HORA_INI=1,CAIXA_LEMBRETE_HORA_FIM=6; // 01h às 05h59
+let _travaCaixaChecando=false;
+async function verificarCaixaPendente(){
+  if(!currentUser||_travaCaixaChecando)return;_travaCaixaChecando=true;
+  try{
+    const{data:cs,error}=await sb.from('caixa_status').select('*').eq('id',1).maybeSingle();if(error)return;
+    const pend=!!(cs&&cs.aberto&&cs.abertura&&new Date(cs.abertura)<getDiaComercial().inicio);
+    let el=document.getElementById('trava-caixa');
+    if(!pend){if(el)el.remove();return;}
+    if(!el){el=document.createElement('div');el.id='trava-caixa';el.style.cssText='position:fixed;inset:0;background:rgba(8,8,12,.96);z-index:450;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center';document.body.appendChild(el);}
+    el.innerHTML=`<div style="max-width:430px;background:var(--card);border:2px solid var(--red);border-radius:14px;padding:22px">
+      <div style="font-size:44px">🔒</div>
+      <h2 style="margin:8px 0;color:var(--red);font-size:20px">O caixa anterior não foi fechado</h2>
+      <p style="color:var(--text2);font-size:14px;margin-bottom:16px">O caixa aberto em <b>${fmtDateFull(cs.abertura)}</b> continua aberto.<br>Conte o dinheiro da gaveta e feche antes de vender.</p>
+      <button class="btn btn-danger" style="width:100%;font-size:16px;padding:14px" onclick="fecharCaixa()">🔒 Fechar caixa agora</button></div>`;
+  }catch(e){console.warn('verificarCaixaPendente',e);}
+  finally{_travaCaixaChecando=false;}
+}
+function esconderLembreteCaixa(){const el=document.getElementById('lembrete-caixa');if(el)el.remove();}
+async function lembrarFecharCaixa(){
+  try{
+    if(!currentUser)return;
+    const h=new Date().getHours();if(h<CAIXA_LEMBRETE_HORA_INI||h>=CAIXA_LEMBRETE_HORA_FIM)return;
+    if(document.getElementById('lembrete-caixa')||document.getElementById('trava-caixa'))return;
+    let ult=0;try{ult=Number(localStorage.getItem('malte_lembrete_caixa')||0);}catch(e){}
+    if(Date.now()-ult<20*60000)return;
+    const{data:cs}=await sb.from('caixa_status').select('aberto').eq('id',1).maybeSingle();if(!cs||!cs.aberto)return;
+    const{data:oc,error}=await sb.from('mesas').select('id').eq('status','ocupada');if(error||(oc||[]).length)return;
+    try{localStorage.setItem('malte_lembrete_caixa',String(Date.now()));}catch(e){}
+    const el=document.createElement('div');el.id='lembrete-caixa';
+    el.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:480;background:#1e293b;border:2px solid var(--gold2);border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.5);max-width:94vw';
+    el.innerHTML=`<span style="font-size:22px">🌙</span><div style="font-size:14px;font-weight:600;color:#fff">Todas as mesas estão fechadas.<br><span style="font-weight:400;font-size:12px;color:#cbd5e1">Fechar o caixa agora?</span></div><button class="btn btn-danger btn-sm" onclick="esconderLembreteCaixa();fecharCaixa()">🔒 Fechar caixa</button><button class="btn btn-secondary btn-sm" onclick="esconderLembreteCaixa()">Agora não</button>`;
+    document.body.appendChild(el);
+  }catch(e){console.warn('lembrarFecharCaixa',e);}
+}
+async function lembrarAbrirCaixa(tab){
+  try{
+    if(!currentUser||!['mesas','balcao','festa'].includes(tab))return;
+    if(document.getElementById('trava-caixa'))return;
+    const chave='malte_aviso_abrir_'+hojeLocalStr(getDiaComercial().inicio);
+    try{if(sessionStorage.getItem(chave))return;}catch(e){}
+    const{data:cs,error}=await sb.from('caixa_status').select('aberto').eq('id',1).maybeSingle();if(error||(cs&&cs.aberto))return;
+    try{sessionStorage.setItem(chave,'1');}catch(e){}
+    if(confirm('⚠️ O CAIXA ESTÁ FECHADO.\n\nAbrir o caixa agora (com o troco inicial)?')){goTab('caixa');setTimeout(abrirCaixa,400);}
+  }catch(e){console.warn('lembrarAbrirCaixa',e);}
+}
+setInterval(verificarCaixaPendente,60000);
+setInterval(lembrarFecharCaixa,5*60000);
 async function verComprovante(vendaId){
   const[{data:v},{data:itens}]=await Promise.all([sb.from('vendas').select('*').eq('id',vendaId).single(),sb.from('venda_itens').select('*').eq('venda_id',vendaId)]);
   const I=itens||[];
@@ -1106,7 +1263,7 @@ async function lancarMesaNoFuncionario(id){
     try{await registrarLog('Consumo funcionário (mesa)',`${nome}: ${fmt(total)}`);}catch(e){}
     closeModal();alert(`✓ ${fmt(total)} lançado no consumo de ${nome}.`);
   }catch(e){alert('Erro: '+e.message);}
-  finally{window._fechandoMesa=false;renderMesas();}
+  finally{window._fechandoMesa=false;renderMesas();lembrarFecharCaixa();}
 }
 async function abrirMesa(id){await garantirMapaMesasFunc();const{data:m}=await sb.from('mesas').select('*').eq('id',id).single();if(m.status==='livre'){openModal(`<h3>🍺 ${nomeMesa(id)}</h3><p style="color:var(--text2);font-size:13px;margin-bottom:18px">Abrir ${funcDaMesa(id)?'a mesa de '+escFunc(funcDaMesa(id))+'? O que for lançado aqui vai pro consumo dele(a).':'a mesa '+id+'?'}</p><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-green" onclick="confirmarAbrirMesa(${id})">Abrir Mesa</button></div>`);}else{await modalMesaAberta(id);}}
 async function confirmarAbrirMesa(id){try{const{error}=await sb.from('mesas').update({status:'ocupada',aberta_em:new Date().toISOString()}).eq('id',id);if(error){alert('Erro ao abrir mesa: '+error.message);return;}closeModal();renderMesas();}catch(e){alert('Erro: '+e.message);}}
@@ -1288,6 +1445,7 @@ async function fecharMesaVenda(id){
     payAtual='dinheiro';splitPagamentos=[];
     if(venda&&valorFinal>0)await verComprovante(venda.id);else closeModal();
     renderMesas();
+    lembrarFecharCaixa();
   }catch(e){console.error(e);alert('Erro ao fechar mesa: '+e.message);}
   finally{window._fechandoMesa=false;}
 }
