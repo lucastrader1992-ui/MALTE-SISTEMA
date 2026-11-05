@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0a0c12">
+<title>Malte Garçom</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<style>
+:root{--bg:#0a0c12;--bg2:#12151f;--bg3:#1a1e2e;--card:#161928;--border:rgba(255,255,255,.08);--border2:rgba(255,255,255,.14);--gold:#d4a017;--gold2:#f0c040;--goldl:rgba(212,160,23,.14);--green:#27ae60;--red:#e0523f;--redl:rgba(224,82,63,.14);--text:#f0f2fa;--text2:#9096b5;--text3:#5d6383;}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{background:var(--bg)}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:15px}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;touch-action:manipulation;border:0;background:none}
+.top{position:sticky;top:0;z-index:5;background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));display:flex;align-items:center;gap:10px;min-height:60px}
+.top h1{font-size:16px;font-weight:700;line-height:1.2}
+.top small{display:block;font-size:12px;font-weight:400;color:var(--text2);margin-top:2px}
+.top .tot{margin-left:auto;font-size:18px;font-weight:700;color:var(--gold2);white-space:nowrap}
+.back{width:40px;height:40px;border-radius:10px;background:var(--bg3);font-size:20px;flex:none}
+.tabs{display:flex;gap:6px;padding:10px 16px;background:var(--bg);position:sticky;top:60px;z-index:4}
+.tabs button{flex:1;height:42px;border-radius:10px;background:var(--bg3);color:var(--text2);font-weight:600;font-size:14px}
+.tabs button.on{background:var(--goldl);color:var(--gold2);box-shadow:inset 0 0 0 1px var(--gold)}
+main{padding:6px 16px calc(32px + env(safe-area-inset-bottom));max-width:760px;margin:0 auto}
+.grid-m{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
+.m{background:var(--card);border:1px solid var(--border);border-radius:12px;min-height:82px;padding:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.m b{font-size:20px}
+.m span{font-size:12px;color:var(--text3)}
+.m.oc{background:var(--goldl);border-color:var(--gold)}
+.m.oc span{color:var(--gold2);font-weight:700}
+.sec{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin:18px 0 8px}
+.lines{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.line{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)}
+.line:last-child{border-bottom:0}
+.line .n{flex:1;min-width:0;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.line .n small{display:block;font-weight:400;color:var(--text2);font-size:12px;margin-top:2px}
+.line .v{font-weight:700;white-space:nowrap}
+.step{display:flex;align-items:center;gap:2px;flex:none}
+.step button{width:38px;height:38px;border-radius:9px;background:var(--bg3);font-size:20px;font-weight:700}
+.step .mi{color:var(--red)}.step .pl{color:var(--green)}
+.step i{font-style:normal;font-weight:700;width:28px;text-align:center}
+.empty{padding:22px 14px;text-align:center;color:var(--text2);font-size:14px}
+input.busca{width:100%;height:46px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);padding:0 14px;outline:none;font-size:16px}
+input.busca:focus{border-color:var(--gold)}
+.cats{display:flex;gap:6px;overflow-x:auto;padding:10px 0;scrollbar-width:none}
+.cats::-webkit-scrollbar{display:none}
+.cats button{flex:none;height:36px;padding:0 13px;border-radius:18px;background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600}
+.cats button.on{background:var(--gold);color:#17120a}
+.grid-p{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:8px}
+.p{position:relative;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px;text-align:left;min-height:84px;display:flex;flex-direction:column;justify-content:space-between;gap:6px}
+.p:active{background:var(--bg3)}
+.p .nm{font-size:13px;font-weight:600;line-height:1.25;padding-right:22px;overflow-wrap:anywhere}
+.p .pr{font-size:14px;font-weight:700;color:var(--gold2)}
+.p .pr.promo{color:#ff7a66}
+.p .q[hidden]{display:none}
+.p .q{position:absolute;top:7px;right:7px;min-width:26px;height:26px;padding:0 6px;border-radius:13px;background:var(--gold);color:#17120a;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
+.big{display:block;width:100%;height:56px;border-radius:12px;font-weight:700;font-size:16px}
+.big.go{background:var(--green);color:#fff}
+.big.stop{background:var(--redl);color:#ff8878;box-shadow:inset 0 0 0 1px var(--red)}
+.big.gold{background:var(--gold);color:#17120a}
+.big:disabled{opacity:.55}
+.hero{padding:42px 12px 18px;text-align:center}
+.hero h2{font-size:22px;margin-bottom:8px}
+.hero p{color:var(--text2);font-size:14px;line-height:1.5;margin-bottom:22px}
+.tr{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:8px}
+.tr .t{min-width:0}
+.tr .t b{display:block;font-size:14px}
+.tr .t small{display:block;color:var(--text2);font-size:12px;margin-top:3px}
+.tr button{flex:none;height:42px;padding:0 15px;border-radius:9px;background:var(--goldl);color:var(--gold2);font-weight:700;box-shadow:inset 0 0 0 1px var(--gold)}
+.sum{display:flex;justify-content:space-between;align-items:baseline;background:var(--card);border:1px solid var(--gold);border-radius:12px;padding:14px;margin-bottom:6px}
+.sum b{font-size:24px;color:var(--gold2)}
+.sum small{display:block;color:var(--text2);font-size:12px;margin-top:3px}
+.btns{display:grid;gap:8px;margin-top:18px}
+.net{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));z-index:9;background:#3a2a10;color:var(--gold2);border:1px solid var(--gold);border-radius:18px;padding:7px 14px;font-size:12px;font-weight:600;white-space:nowrap}
+.toast{position:fixed;left:16px;right:16px;bottom:calc(52px + env(safe-area-inset-bottom));z-index:12;background:#2b1512;color:#ffb3a8;border:1px solid var(--red);border-radius:10px;padding:12px;font-size:14px;text-align:center}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:20;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:20px;width:100%;max-width:400px}
+.modal h3{font-size:18px;margin-bottom:8px}
+.modal p{color:var(--text2);font-size:14px;line-height:1.5;margin-bottom:6px}
+.modal .val{font-size:26px;font-weight:700;color:var(--gold2);margin:10px 0 16px}
+.modal .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.modal .row button{height:50px;border-radius:10px;font-weight:700}
+.modal .no{background:var(--bg3)}.modal .yes{background:var(--red);color:#fff}
+.load{min-height:70vh;display:flex;align-items:center;justify-content:center;color:var(--text2);text-align:center;padding:20px;flex-direction:column;gap:14px}
+</style>
+</head>
+<body>
+<div id="app"><div class="load">Carregando...</div></div>
+<div id="extras"></div>
+<script>
+'use strict';
+const SUPABASE_URL='https://akicvaywryppktjiccpi.supabase.co';
+const SUPABASE_KEY='sb_publishable_KlSN5wVH24AYhF7kjEU0pg_NnVl2SQg';
+const TZ='America/Fortaleza',TOTAL_MESAS=29,PEND_KEY='malte_garcom_pendentes';
+const app=document.getElementById('app'),extras=document.getElementById('extras');
+let sb=null,produtos=[],turno=null,linhas=[],historico=[];
+let tela='mesas',mesaSel=null,catSel='Todos',busca='',modal=null,toastTxt='',toastT=null;
+let ultimaEstrutura='',ultimaAssinatura='';
+let pend=lerPend(),enviando=false,seq=0,erroRede=false,iniciando=false,fechando=false;
+
+function lerPend(){try{return JSON.parse(localStorage.getItem(PEND_KEY)||'[]')}catch(e){return[]}}
+function salvarPend(){try{localStorage.setItem(PEND_KEY,JSON.stringify(pend))}catch(e){}}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function brl(v){return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
+function fmtData(d){return new Date(d).toLocaleDateString('pt-BR',{timeZone:TZ})}
+function fmtHora(d){return new Date(d).toLocaleTimeString('pt-BR',{timeZone:TZ,hour:'2-digit',minute:'2-digit'})}
+function fmtDH(d){return fmtData(d)+' às '+fmtHora(d)}
+function novoUid(){return(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2))}
+function precoDe(p){return p.em_promo&&p.preco_promo?Number(p.preco_promo):Number(p.preco)}
+function nomeLimpo(n){return String(n||'').trim()}
+function mostrarToast(t){toastTxt=t;clearTimeout(toastT);toastT=setTimeout(()=>{toastTxt='';desenharExtras()},4500);desenharExtras()}
+
+// ---------- dados ----------
+function chave(l){return l.mesa+'|'+(l.prod_id==null?'':l.prod_id)+'|'+l.nome+'|'+Number(l.preco)}
+function linhasAtuais(){
+  const m=new Map();
+  for(const l of linhas)m.set(chave(l),{...l,preco:Number(l.preco),qty:Number(l.qty)});
+  if(turno)for(const p of pend){
+    if(p.turno_id!==turno.id)continue;
+    const k=chave(p),a=m.get(k);
+    if(a)a.qty+=p.delta;else m.set(k,{mesa:p.mesa,prod_id:p.prod_id,nome:p.nome,preco:Number(p.preco),qty:p.delta});
+  }
+  return[...m.values()].filter(l=>l.qty>0);
+}
+const totalDe=L=>L.reduce((s,l)=>s+l.qty*l.preco,0);
+const itensDe=L=>L.reduce((s,l)=>s+l.qty,0);
+
+async function todasLinhas(turnoId){
+  const out=[];
+  for(let i=0;;i+=1000){
+    const{data,error}=await sb.from('garcom_resumo').select('mesa,prod_id,nome,preco,qty').eq('turno_id',turnoId).order('mesa').order('nome').range(i,i+999);
+    if(error)throw error;
+    out.push(...data);
+    if(data.length<1000)return out;
+  }
+}
+async function carregarProdutos(){
+  const{data,error}=await sb.from('produtos').select('id,nome,cat,emoji,preco,em_promo,preco_promo').order('nome');
+  if(error)throw error;
+  produtos=(data||[]).filter(p=>Number(p.preco)>0||(p.em_promo&&Number(p.preco_promo)>0));
+}
+async function carregarHistorico(){
+  const{data,error}=await sb.from('garcom_turnos_resumo').select('*').not('fechado_em','is',null).order('aberto_em',{ascending:false}).limit(90);
+  if(error)throw error;
+  historico=data||[];
+}
+async function atualizar(){
+  if(!sb||document.hidden)return;
+  const ini=seq;
+  try{
+    const{data,error}=await sb.from('garcom_turnos').select('id,aberto_em,fechado_em').is('fechado_em',null).limit(1);
+    if(error)throw error;
+    const t=(data&&data[0])||null;
+    const L=t?await todasLinhas(t.id):[];
+    if(ini!==seq||enviando)return;
+    if(turno&&!t&&!fechando){await carregarHistorico();mesaSel=null;tela='mesas';mostrarToast('A venda foi fechada em outro aparelho.')}
+    turno=t;linhas=L;erroRede=false;
+    desenhar();
+  }catch(e){erroRede=true;desenharExtras()}
+}
+function lancar(mesa,prod_id,nome,preco,delta){
+  if(!turno)return;
+  pend.push({uid:novoUid(),turno_id:turno.id,mesa,prod_id,nome,preco:Number(preco),delta});
+  salvarPend();desenhar();enviar();
+}
+async function enviar(){
+  if(enviando||!pend.length||!sb)return;
+  enviando=true;
+  const lote=pend.slice(0,50);
+  try{
+    const{error}=await sb.from('garcom_lancamentos').upsert(lote,{onConflict:'uid',ignoreDuplicates:true});
+    if(error){
+      if(error.code==='P0001'||/venda fechada/i.test(error.message||'')){
+        const ids=new Set(lote.map(x=>x.uid));
+        pend=pend.filter(x=>!ids.has(x.uid));salvarPend();
+        mostrarToast('Esse lançamento não entrou porque a venda já foi fechada.');
+        enviando=false;await atualizar();return;
+      }
+      throw error;
+    }
+    // confirma no servidor antes de tirar da fila, para o total não oscilar
+    const L=turno?await todasLinhas(turno.id):linhas;
+    const ids=new Set(lote.map(x=>x.uid));
+    pend=pend.filter(x=>!ids.has(x.uid));salvarPend();
+    linhas=L;seq++;erroRede=false;
+    enviando=false;desenhar();
+    if(pend.length)enviar();
+  }catch(e){
+    enviando=false;erroRede=true;desenharExtras();
+    setTimeout(enviar,2500);
+  }
+}
+async function aguardarEnvio(){
+  for(let i=0;i<24&&(pend.length||enviando);i++){
+    if(!enviando)enviar();
+    await new Promise(r=>setTimeout(r,250));
+  }
+  return!pend.length;
+}
+
+// ---------- ações ----------
+window.iniciarVenda=async function(){
+  if(iniciando)return;iniciando=true;desenhar();
+  try{
+    const{error}=await sb.from('garcom_turnos').insert({});
+    if(error&&error.code!=='23505')throw error;
+    tela='mesas';mesaSel=null;
+  }catch(e){mostrarToast('Não consegui iniciar a venda. Confira a internet e tente de novo.')}
+  iniciando=false;await atualizar();desenhar();
+};
+window.pedirFechar=function(){modal='fechar';desenharExtras()};
+window.cancelarModal=function(){modal=null;desenharExtras()};
+window.confirmarFechar=async function(){
+  if(fechando)return;fechando=true;desenharExtras();
+  try{
+    if(!await aguardarEnvio())throw new Error('pendente');
+    const id=turno.id;
+    const{error}=await sb.from('garcom_turnos').update({fechado_em:new Date().toISOString()}).eq('id',id).is('fechado_em',null);
+    if(error)throw error;
+    modal=null;mesaSel=null;linhas=[];turno=null;tela='relatorios';
+    await carregarHistorico();
+    fechando=false;await atualizar();desenhar();desenharExtras();
+    return;
+  }catch(e){
+    modal=null;
+    mostrarToast(e.message==='pendente'?'Ainda há lançamentos sem enviar. Espere a internet voltar e feche de novo.':'Não consegui fechar a venda. Tente de novo.');
+  }
+  fechando=false;desenharExtras();
+};
+window.irTela=async function(t){tela=t;mesaSel=null;busca='';catSel='Todos';if(t==='relatorios'){await carregarHistorico().catch(()=>{})}desenhar();scrollTo(0,0)};
+window.abrirMesa=function(n){mesaSel=n;busca='';catSel='Todos';carregarProdutos().catch(()=>{}).then(desenhar);desenhar();scrollTo(0,0)};
+window.voltar=function(){mesaSel=null;desenhar();scrollTo(0,0)};
+window.addProd=function(id){const p=produtos.find(x=>x.id===id);if(p)lancar(mesaSel,p.id,nomeLimpo(p.nome),precoDe(p),1)};
+window.ajustar=function(k,d){const l=linhasAtuais().find(x=>chave(x)===k);if(l)lancar(l.mesa,l.prod_id,l.nome,l.preco,d)};
+window.setCat=function(c){catSel=c;desenhar()};
+window.setBusca=function(v){busca=v;desenharProdutos()};
+
+// ---------- telas ----------
+function topo(tit,sub,tot,voltarBtn){
+  return`<header class="top">${voltarBtn?`<button class="back" onclick="voltar()" aria-label="Voltar">‹</button>`:''}<h1>${esc(tit)}<small>${esc(sub)}</small></h1>${tot!=null?`<div class="tot">${brl(tot)}</div>`:''}</header>`;
+}
+function abas(){
+  const a=[['mesas','Mesas'],['resumo','Resumo'],['relatorios','Relatórios']];
+  return`<nav class="tabs">${a.map(([k,n])=>`<button class="${tela===k?'on':''}" onclick="irTela('${k}')">${n}</button>`).join('')}</nav>`;
+}
+function telaMesas(L){
+  let h='<div class="grid-m">';
+  for(let n=1;n<=TOTAL_MESAS;n++){
+    const t=totalDe(L.filter(l=>l.mesa===n));
+    h+=`<button class="m ${t>0?'oc':''}" data-m="${n}"><b>${n}</b><span>${t>0?brl(t):'livre'}</span></button>`;
+  }
+  return h+'</div>';
+}
+function listaProdutosHtml(L){
+  const q=busca.trim().toLowerCase();
+  const P=produtos.filter(p=>(catSel==='Todos'||p.cat===catSel)&&(!q||String(p.nome).toLowerCase().includes(q)));
+  if(!P.length)return'<div class="empty">Nenhum produto encontrado.</div>';
+  return'<div class="grid-p">'+P.map(p=>{
+    const qt=itensDe(L.filter(l=>l.mesa===mesaSel&&l.prod_id===p.id));
+    return`<button class="p" data-p="${Number(p.id)}"><span class="q" ${qt?'':'hidden'}>${qt||''}</span><span class="nm">${esc(p.emoji||'')} ${esc(p.nome)}</span><span class="pr ${p.em_promo&&p.preco_promo?'promo':''}">${brl(precoDe(p))}</span></button>`;
+  }).join('')+'</div>';
+}
+function desenharProdutos(){const el=document.getElementById('prods');if(el)el.innerHTML=listaProdutosHtml(linhasAtuais())}
+function pedidosHtml(M){
+  return M.length?`<div class="lines">${M.map(l=>{const k=esc(chave(l));return`<div class="line" data-l="${k}"><div class="n">${esc(l.nome)}<small>${brl(l.preco)} cada · ${brl(l.qty*l.preco)}</small></div><div class="step"><button class="mi" data-k="${k}" data-d="-1" aria-label="Tirar 1">−</button><i>${l.qty}</i><button class="pl" data-k="${k}" data-d="1" aria-label="Somar 1">+</button></div></div>`}).join('')}</div>`:`<div class="lines"><div class="empty">Toque em um produto para lançar.</div></div>`;
+}
+// atualiza a tela no lugar, sem trocar os botões: um toque nunca se perde no meio de um redesenho
+function atualizarMesaNoLugar(L){
+  const M=L.filter(l=>l.mesa===mesaSel),box=document.getElementById('pedidos');
+  atualizarTopoMesa();
+  if(box){
+    const atuais=[...box.querySelectorAll('.line')].map(e=>e.dataset.l).join('\n');
+    if(atuais!==M.map(chave).join('\n'))box.innerHTML=pedidosHtml(M);
+    else for(const l of M){
+      const e=[...box.querySelectorAll('.line')].find(x=>x.dataset.l===chave(l));
+      e.querySelector('.step i').textContent=l.qty;
+      e.querySelector('.n small').textContent=brl(l.preco)+' cada · '+brl(l.qty*l.preco);
+    }
+  }
+  document.querySelectorAll('.p[data-p]').forEach(el=>{
+    const q=el.querySelector('.q'),n=itensDe(M.filter(l=>l.prod_id===Number(el.dataset.p)));
+    q.hidden=!n;q.textContent=n||'';
+  });
+}
+function atualizarGradeNoLugar(L){
+  document.querySelectorAll('.m[data-m]').forEach(el=>{
+    const t=totalDe(L.filter(l=>l.mesa===Number(el.dataset.m)));
+    el.classList.toggle('oc',t>0);el.querySelector('span').textContent=t>0?brl(t):'livre';
+  });
+  const tot=document.querySelector('.top .tot');if(tot)tot.textContent=brl(totalDe(L));
+}
+function telaMesa(L){
+  const M=L.filter(l=>l.mesa===mesaSel);
+  const cats=['Todos',...new Set(produtos.map(p=>p.cat).filter(Boolean))];
+  let h=`<div class="sec" style="margin-top:8px">Pedidos da mesa</div>`;
+  h+=`<div id="pedidos">${pedidosHtml(M)}</div>`;
+  h+=`<div class="sec">Produtos</div><input class="busca" type="search" placeholder="Buscar produto" value="${esc(busca)}" oninput="setBusca(this.value)">`;
+  h+=`<div class="cats">${cats.map(c=>`<button class="${catSel===c?'on':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>`;
+  h+=`<div id="prods">${listaProdutosHtml(L)}</div>`;
+  return h;
+}
+function agruparProdutos(L){
+  const m=new Map();
+  for(const l of L){const k=l.nome+'|'+l.preco,a=m.get(k);if(a)a.qty+=l.qty;else m.set(k,{nome:l.nome,preco:l.preco,qty:l.qty})}
+  return[...m.values()].sort((a,b)=>b.qty*b.preco-a.qty*a.preco);
+}
+function telaResumo(L){
+  const G=agruparProdutos(L),total=totalDe(L);
+  let h=`<div class="sum" style="margin-top:6px"><div><small style="margin:0 0 3px">Total da venda</small><b>${brl(total)}</b></div><small>${itensDe(L)} itens em ${new Set(L.map(l=>l.mesa)).size} mesas</small></div>`;
+  h+=`<div class="sec">Por produto</div><div class="lines">${G.length?G.map(g=>`<div class="line"><div class="n">${esc(g.nome)}<small>${g.qty} × ${brl(g.preco)}</small></div><div class="v">${brl(g.qty*g.preco)}</div></div>`).join(''):'<div class="empty">Nada lançado ainda.</div>'}</div>`;
+  h+=`<div class="btns"><button class="big gold" onclick="baixarPDF(${turno.id})">Baixar PDF parcial</button><button class="big stop" onclick="pedirFechar()">Fechar venda</button></div>`;
+  return h;
+}
+function telaRelatorios(){
+  let h='<div class="sec" style="margin-top:8px">Vendas fechadas</div>';
+  if(!historico.length)return h+'<div class="lines"><div class="empty">Nenhuma venda fechada ainda.</div></div>';
+  return h+historico.map(t=>`<div class="tr"><div class="t"><b>${fmtData(t.aberto_em)} · ${brl(t.total)}</b><small>${fmtHora(t.aberto_em)} até ${fmtData(t.fechado_em)===fmtData(t.aberto_em)?'':fmtData(t.fechado_em)+' '}${fmtHora(t.fechado_em)} · ${t.itens} itens</small></div><button onclick="baixarPDF(${Number(t.id)})">PDF</button></div>`).join('');
+}
+function desenhar(){
+  if(!sb)return;
+  const L=linhasAtuais();
+  const estrutura=[tela,mesaSel,turno&&turno.id,iniciando,catSel,produtos.map(p=>p.id+':'+precoDe(p)).join(),historico.map(t=>t.id).join()].join('#');
+  if(estrutura===ultimaEstrutura&&turno&&mesaSel){atualizarMesaNoLugar(L);desenharExtras();return}
+  if(estrutura===ultimaEstrutura&&turno&&tela==='mesas'){atualizarGradeNoLugar(L);desenharExtras();return}
+  const assinatura=estrutura+JSON.stringify(L);
+  if(assinatura===ultimaAssinatura){desenharExtras();return}
+  ultimaEstrutura=estrutura;ultimaAssinatura=assinatura;
+  if(!turno&&tela!=='relatorios'){
+    app.innerHTML=`${topo('Malte · Garçom','Nenhuma venda aberta')}<main><div class="hero"><h2>Pronto para começar?</h2><p>Inicie a venda para liberar as mesas. Isso não mexe no estoque nem no caixa da Malte.</p><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar venda'}</button></div><button class="big" style="background:var(--bg3)" onclick="irTela('relatorios')">Ver relatórios</button></main>`;
+    desenharExtras();return;
+  }
+  if(!turno){
+    app.innerHTML=`${topo('Relatórios','Nenhuma venda aberta')}<main><div class="btns" style="margin:10px 0 0"><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar nova venda'}</button></div>${telaRelatorios()}</main>`;
+    desenharExtras();return;
+  }
+  const sub='Venda aberta desde '+fmtHora(turno.aberto_em);
+  if(mesaSel){
+    const y=scrollY;
+    app.innerHTML=`${topo('Mesa '+mesaSel,itensDe(L.filter(l=>l.mesa===mesaSel))+' itens',totalDe(L.filter(l=>l.mesa===mesaSel)),true)}<main>${telaMesa(L)}</main>`;
+    scrollTo(0,y);
+  }else{
+    const y=scrollY;
+    const c=tela==='resumo'?telaResumo(L):tela==='relatorios'?telaRelatorios():telaMesas(L);
+    app.innerHTML=`${topo('Malte · Garçom',sub,totalDe(L))}${abas()}<main>${c}</main>`;
+    scrollTo(0,y);
+  }
+  desenharExtras();
+}
+function atualizarTopoMesa(){
+  const L=linhasAtuais().filter(l=>l.mesa===mesaSel),tot=document.querySelector('.top .tot'),sm=document.querySelector('.top small');
+  if(tot)tot.textContent=brl(totalDe(L));if(sm)sm.textContent=itensDe(L)+' itens';
+}
+function desenharExtras(){
+  let h='';
+  if(erroRede||pend.length>3)h+=`<div class="net">${erroRede?'Sem conexão':'Enviando'}${pend.length?' · '+pend.length+' na fila':''}</div>`;
+  if(toastTxt)h+=`<div class="toast">${esc(toastTxt)}</div>`;
+  if(modal==='fechar'&&turno){
+    const L=linhasAtuais();
+    h+=`<div class="ov"><div class="modal" role="dialog" aria-modal="true"><h3>Fechar a venda?</h3><p>Depois de fechar, ninguém mais lança nesta venda. O relatório fica salvo em Relatórios.</p><div class="val">${brl(totalDe(L))}</div><div class="row"><button class="no" onclick="cancelarModal()" ${fechando?'disabled':''}>Voltar</button><button class="yes" onclick="confirmarFechar()" ${fechando?'disabled':''}>${fechando?'Fechando...':'Fechar venda'}</button></div></div></div>`;
+  }
+  extras.innerHTML=h;
+}
+
+// botões cujos dados vêm do banco usam atributos, nunca texto dentro de onclick
+app.addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.p!=null)addProd(Number(b.dataset.p));
+  else if(b.dataset.m!=null)abrirMesa(Number(b.dataset.m));
+  else if(b.dataset.k!=null)ajustar(b.dataset.k,Number(b.dataset.d));
+  else if(b.dataset.cat!=null)setCat(b.dataset.cat);
+});
+
+// ---------- PDF ----------
+window.baixarPDF=async function(id){
+  if(!(window.jspdf&&window.jspdf.jsPDF)){mostrarToast('Não consegui carregar o gerador de PDF. Confira a internet.');return}
+  try{
+    await aguardarEnvio();
+    const{data:t,error}=await sb.from('garcom_turnos').select('*').eq('id',id).single();
+    if(error)throw error;
+    const L=(await todasLinhas(id)).map(l=>({...l,preco:Number(l.preco),qty:Number(l.qty)}));
+    const doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+    const txt=s=>String(s).replace(/[^ -ÿ]/g,'').trim();
+    const gold=[150,108,8],dark=[28,30,40],cinza=[110,112,125];
+    doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...dark);doc.text('Malte Distribuidora',14,18);
+    doc.setFontSize(12);doc.setTextColor(...gold);doc.text('Controle do garçom',14,25);
+    doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(...cinza);
+    doc.text('Início: '+fmtDH(t.aberto_em),14,33);
+    doc.text(t.fechado_em?'Fim: '+fmtDH(t.fechado_em):'VENDA EM ANDAMENTO, relatório parcial gerado em '+fmtDH(Date.now()),14,38.5);
+    doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(...cinza);doc.text('TOTAL',196,18,{align:'right'});
+    doc.setFontSize(18);doc.setTextColor(...dark);doc.text(brl(totalDe(L)).replace(/ /g,' '),196,26,{align:'right'});
+    doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(...cinza);
+    doc.text(itensDe(L)+' itens em '+new Set(L.map(l=>l.mesa)).size+' mesas',196,33,{align:'right'});
+    const m=v=>brl(v).replace(/ /g,' ');
+    const estilo={theme:'grid',styles:{fontSize:10,cellPadding:2.2,textColor:dark,lineColor:[215,216,222],lineWidth:.15},headStyles:{fillColor:[32,35,48],textColor:255,fontStyle:'bold'},columnStyles:{1:{halign:'right',cellWidth:18},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:32}},margin:{left:14,right:14},footStyles:{fillColor:[244,239,224],textColor:dark,fontStyle:'bold'}};
+    const G=agruparProdutos(L);
+    doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(...dark);doc.text('Por produto',14,48);
+    doc.autoTable({...estilo,startY:51,head:[['Produto','Qtd','Preço','Total']],body:G.length?G.map(g=>[txt(g.nome),g.qty,m(g.preco),m(g.qty*g.preco)]):[['Nada lançado','','','']],foot:[['Total',itensDe(L),'',m(totalDe(L))]],showFoot:'lastPage',columnStyles:{...estilo.columnStyles,1:{halign:'right',cellWidth:18}}});
+    const mesas=[...new Set(L.map(l=>l.mesa))].sort((a,b)=>a-b);
+    let y=doc.lastAutoTable.finalY+11;
+    if(mesas.length){
+      if(y>265){doc.addPage();y=18}
+      doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(...dark);doc.text('Por mesa',14,y);y+=3;
+      const corpo=[];
+      for(const n of mesas){
+        const M=L.filter(l=>l.mesa===n);
+        corpo.push([{content:'Mesa '+n,colSpan:3,styles:{fontStyle:'bold',fillColor:[244,239,224]}},{content:m(totalDe(M)),styles:{fontStyle:'bold',halign:'right',fillColor:[244,239,224]}}]);
+        for(const l of M)corpo.push([txt(l.nome),l.qty,m(l.preco),m(l.qty*l.preco)]);
+      }
+      doc.autoTable({...estilo,startY:y,head:[['Produto','Qtd','Preço','Total']],body:corpo});
+    }
+    const pgs=doc.internal.getNumberOfPages();
+    for(let i=1;i<=pgs;i++){doc.setPage(i);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(...cinza);doc.text('Controle interno. Não altera estoque nem caixa do sistema.',14,289);doc.text('Página '+i+' de '+pgs,196,289,{align:'right'})}
+    const nomeData=new Date(t.aberto_em).toLocaleDateString('en-CA',{timeZone:TZ});
+    doc.save('garcom_'+nomeData+'_venda-'+t.id+'.pdf');
+  }catch(e){console.error(e);mostrarToast('Não consegui gerar o PDF. Tente de novo.')}
+};
+
+// ---------- início ----------
+async function iniciar(){
+  try{
+    if(typeof supabase==='undefined')throw new Error('sem-lib');
+    sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+    await carregarProdutos();
+    await carregarHistorico();
+    await atualizar();
+    desenhar();
+    enviar();
+    setInterval(atualizar,4000);
+    setInterval(()=>carregarProdutos().then(()=>{if(mesaSel)desenharProdutos()}).catch(()=>{}),60000);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden){atualizar();enviar()}});
+  }catch(e){
+    console.error(e);
+    app.innerHTML='<div class="load"><div>Não consegui conectar. Confira a internet.</div><button class="big gold" style="max-width:220px" onclick="location.reload()">Tentar de novo</button></div>';
+  }
+}
+iniciar();
+</script>
+</body>
+</html>
