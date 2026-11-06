@@ -131,7 +131,7 @@ let sb=null,produtos=[],turno=null,linhas=[],historico=[];
 let tela='mesas',mesaSel=null,catSel='Todos',busca='',modal=null,toastTxt='',toastT=null;
 let ultimaEstrutura='',ultimaAssinatura='';
 const PAGS=[['dinheiro','Dinheiro'],['debito','Débito'],['credito','Crédito'],['pix','Pix']];
-let nomesMesa={},salvandoNome=Promise.resolve(),vendidas=[],fechamentos=[],pagSel=new Set(),fechandoMesa=false,ultimoExtras=null,toastOk=false;
+let extrato=null,extratoDe=null,nomesMesa={},salvandoNome=Promise.resolve(),vendidas=[],fechamentos=[],pagSel=new Set(),fechandoMesa=false,ultimoExtras=null,toastOk=false;
 let token=lerToken(),usuario=null,usuariosLogin=[],loginSel=null,loginErro='',loginEnviando=false,equipe=null,modalAlvo=null,timers=[];
 let pend=lerPend(),enviando=false,seq=0,erroRede=false,iniciando=false,fechando=false;
 
@@ -193,6 +193,7 @@ async function atualizar(){
     usuario=d.usuario;
     if(turno&&!d.turno&&!fechando){await carregarHistorico();mesaSel=null;tela='mesas';mostrarToast('A venda foi fechada em outro aparelho.')}
     turno=d.turno;aplicarEstado(d);erroRede=false;
+    if(tela==='salario'||tela==='extrato'){const ant=extrato;await carregarExtrato(extratoDe);if(JSON.stringify(ant)!==JSON.stringify(extrato))ultimaAssinatura=''}
     desenhar();
   }catch(e){if(token){erroRede=true;desenharExtras()}}
 }
@@ -294,7 +295,9 @@ window.confirmarFechar=async function(){
   }
   fechando=false;desenharExtras();
 };
-window.irTela=async function(t){tela=t;mesaSel=null;busca='';catSel='Todos';if(t==='relatorios'){await carregarHistorico().catch(()=>{})}if(t==='equipe'){await carregarEquipe()}desenhar();scrollTo(0,0)};
+window.irTela=async function(t){tela=t;mesaSel=null;busca='';catSel='Todos';if(t==='relatorios'){await carregarHistorico().catch(()=>{})}if(t==='equipe'){await carregarEquipe()}if(t==='salario'){await carregarExtrato(null)}desenhar();scrollTo(0,0)};
+async function carregarExtrato(id){extratoDe=id||null;try{extrato=await rpc('garcom_extrato',id?{p_usuario:id}:{})}catch(e){extrato=undefined}}
+window.verExtrato=async function(id){await carregarExtrato(id);tela='extrato';mesaSel=null;ultimaAssinatura='';desenhar();scrollTo(0,0)};
 async function carregarEquipe(){try{equipe=await rpc('garcom_equipe')}catch(e){equipe=null}}
 window.pedirSair=function(){if(pend.length){mostrarToast('Espere enviar os lançamentos antes de sair.');return}modal='sair';desenharExtras()};
 window.confirmarSair=async function(){const t=token;modal=null;try{await sb.rpc('garcom_sair',{p_token:t})}catch(e){}perderSessao()};
@@ -374,7 +377,7 @@ function topo(tit,sub,tot,voltarBtn){
   return`<header class="top">${voltarBtn?`<button class="back" onclick="voltar()" aria-label="Voltar">‹</button>`:''}<h1>${esc(tit)}<small>${esc(sub)}</small></h1>${tot!=null?`<div class="tot">${brl(tot)}</div>`:''}${voltarBtn?'':`<button class="sair" onclick="pedirSair()">Sair</button>`}</header>`;
 }
 function abas(){
-  const a=[['mesas','Mesas'],['resumo','Painel'],['relatorios','Relatórios']];if(usuario&&usuario.perfil==='mae')a.push(['equipe','Equipe']);
+  const a=[['mesas','Mesas'],['resumo','Painel'],['relatorios','Relatórios']];if(usuario&&usuario.perfil==='mae')a.push(['equipe','Equipe']);if(usuario&&usuario.tem_extrato)a.push(['salario','Salário']);
   return`<nav class="tabs">${a.map(([k,n])=>`<button class="${tela===k?'on':''}" onclick="irTela('${k}')">${n}</button>`).join('')}</nav>`;
 }
 function telaMesas(L){
@@ -456,10 +459,20 @@ function telaRelatorios(){
   if(!historico.length)return h+'<div class="lines"><div class="empty">Nenhuma venda fechada ainda.</div></div>';
   return h+historico.map(t=>`<div class="tr"><div class="t"><b>${fmtData(t.aberto_em)} · ${brl(t.total)}</b><small>${fmtHora(t.aberto_em)} até ${fmtData(t.fechado_em)===fmtData(t.aberto_em)?'':fmtData(t.fechado_em)+' '}${fmtHora(t.fechado_em)} · ${t.itens} itens</small></div><button onclick="baixarPDF(${Number(t.id)})">PDF</button></div>`).join('');
 }
+function telaExtrato(){
+  if(extrato===undefined)return'<div class="lines" style="margin-top:8px"><div class="empty">Não consegui carregar. Confira a internet.</div></div>';
+  if(!extrato)return'<div class="lines" style="margin-top:8px"><div class="empty">Sem salário cadastrado.</div></div>';
+  const I=extrato.itens||[],cons=I.filter(x=>x.tipo==='consumo').reduce((s,x)=>s+Number(x.valor),0),vale=I.filter(x=>x.tipo==='vale').reduce((s,x)=>s+Number(x.valor),0),sal=Number(extrato.salario),resta=sal-cons-vale;
+  const dt=d=>String(d).split('-').reverse().join('/');
+  let h=`${extratoDe?`<div class="sec" style="margin-top:8px">${esc(extrato.nome)}</div>`:''}<div class="duo" style="margin-top:8px"><div><small>Salário</small><b>${brl(sal)}</b></div><div class="pr"><small>A receber</small><b style="color:${resta<0?'#ff8878':''}">${brl(resta)}</b></div></div>`;
+  h+=`<div class="duo"><div><small>Consumo</small><b>${brl(cons)}</b></div><div><small>Vales</small><b>${brl(vale)}</b></div></div>`;
+  h+=`<div class="sec">Lançamentos até hoje</div><div class="lines">${I.length?I.map(x=>`<div class="line"><div class="n">${esc(x.descricao||'')}<small>${x.tipo==='vale'?'Vale':'Consumo'} · ${dt(x.data)}</small></div><div class="v">${brl(x.valor)}</div></div>`).join(''):'<div class="empty">Nenhum consumo ou vale.</div>'}</div>`;
+  return h;
+}
 function telaEquipe(){
   if(!equipe)return'<div class="lines" style="margin-top:8px"><div class="empty">Não consegui carregar a equipe.</div></div>';
   let h='<div class="sec" style="margin-top:8px">Garçons</div>';
-  h+=(equipe.usuarios||[]).map(u=>`<div class="tr"><div class="t"><b>${esc(u.nome)}</b><small>${u.tem_senha?'Senha criada':'Aguardando primeiro acesso'}${u.ultimo_acesso_em?' · último acesso '+fmtDH(u.ultimo_acesso_em):''}</small></div>${u.tem_senha?`<button data-reset="${Number(u.id)}" data-nome="${esc(u.nome)}">Nova senha</button>`:''}</div>`).join('');
+  h+=(equipe.usuarios||[]).map(u=>`<div class="tr"><div class="t"><b>${esc(u.nome)}</b><small>${u.tem_senha?'Senha criada':'Aguardando primeiro acesso'}${u.ultimo_acesso_em?' · último acesso '+fmtDH(u.ultimo_acesso_em):''}</small></div>${u.tem_extrato?`<button data-extrato="${Number(u.id)}" style="margin-right:6px">Salário</button>`:''}${u.tem_senha?`<button data-reset="${Number(u.id)}" data-nome="${esc(u.nome)}">Nova senha</button>`:''}</div>`).join('');
   const A=equipe.atividade||[];
   h+='<div class="sec">Últimos lançamentos</div>';
   h+=`<div class="lines">${A.length?A.map(x=>`<div class="line"><div class="n">${x.delta>0?'+1':'−1'} ${esc(x.nome)}<small>Mesa ${Number(x.mesa)} · ${esc(x.usuario||'Sem usuário')} · ${fmtDH(x.criado_em)}</small></div><div class="v" style="color:${x.delta>0?'var(--green)':'var(--red)'}">${brl(x.preco)}</div></div>`).join(''):'<div class="empty">Nenhum lançamento ainda.</div>'}</div>`;
@@ -472,15 +485,19 @@ function desenhar(){
   const estrutura=[usuario.id,tela,mesaSel,turno&&turno.id,iniciando,catSel,produtos.map(p=>p.id+':'+precoDe(p)).join(),historico.map(t=>t.id).join()].join('#');
   if(estrutura===ultimaEstrutura&&turno&&mesaSel){atualizarMesaNoLugar(L);desenharExtras();return}
   if(estrutura===ultimaEstrutura&&turno&&tela==='mesas'){atualizarGradeNoLugar(L);desenharExtras();return}
-  const assinatura=estrutura+JSON.stringify(L)+(tela==='resumo'?JSON.stringify(fechamentos):'')+(tela==='equipe'?JSON.stringify(equipe):'');
+  const assinatura=estrutura+(tela==='extrato'||tela==='salario'?JSON.stringify(extrato):'')+JSON.stringify(L)+(tela==='resumo'?JSON.stringify(fechamentos):'')+(tela==='equipe'?JSON.stringify(equipe):'');
   if(assinatura===ultimaAssinatura){desenharExtras();return}
   ultimaEstrutura=estrutura;ultimaAssinatura=assinatura;
+  if(tela==='extrato'||(tela==='salario'&&!turno)){
+    app.innerHTML=`${topo(extratoDe?'Salário':'Meu salário',usuario.nome)}<main><button class="big" style="background:var(--bg3);margin-top:10px" onclick="irTela('${extratoDe?'equipe':'mesas'}')">Voltar</button>${telaExtrato()}</main>`;
+    desenharExtras();return;
+  }
   if(!turno&&tela==='equipe'){
     app.innerHTML=`${topo('Equipe',usuario.nome)}<main><button class="big" style="background:var(--bg3);margin-top:10px" onclick="irTela('mesas')">Voltar</button>${telaEquipe()}</main>`;
     desenharExtras();return;
   }
   if(!turno&&tela!=='relatorios'){
-    app.innerHTML=`${topo('Malte · Garçom',usuario.nome+' · nenhuma venda aberta')}<main><div class="hero"><h2>Pronto para começar?</h2><p>Inicie a venda para liberar as mesas. Isso não mexe no estoque nem no caixa da Malte.</p><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar venda'}</button></div><button class="big" style="background:var(--bg3)" onclick="irTela('relatorios')">Ver relatórios</button>${usuario.perfil==='mae'?`<button class="big" style="background:var(--bg3);margin-top:8px" onclick="irTela('equipe')">Equipe</button>`:''}</main>`;
+    app.innerHTML=`${topo('Malte · Garçom',usuario.nome+' · nenhuma venda aberta')}<main><div class="hero"><h2>Pronto para começar?</h2><p>Inicie a venda para liberar as mesas. Isso não mexe no estoque nem no caixa da Malte.</p><button class="big go" onclick="iniciarVenda()" ${iniciando?'disabled':''}>${iniciando?'Iniciando...':'Iniciar venda'}</button></div><button class="big" style="background:var(--bg3)" onclick="irTela('relatorios')">Ver relatórios</button>${usuario.perfil==='mae'?`<button class="big" style="background:var(--bg3);margin-top:8px" onclick="irTela('equipe')">Equipe</button>`:''}${usuario.tem_extrato?`<button class="big" style="background:var(--bg3);margin-top:8px" onclick="irTela('salario')">Meu salário</button>`:''}</main>`;
     desenharExtras();return;
   }
   if(!turno){
@@ -494,7 +511,7 @@ function desenhar(){
     scrollTo(0,y);
   }else{
     const y=scrollY;
-    const c=tela==='resumo'?telaResumo(L):tela==='relatorios'?telaRelatorios():tela==='equipe'?telaEquipe():telaMesas(L);
+    const c=tela==='resumo'?telaResumo(L):tela==='relatorios'?telaRelatorios():tela==='equipe'?telaEquipe():tela==='salario'?telaExtrato():telaMesas(L);
     app.innerHTML=`${topo('Malte · Garçom',sub,totalDe(L)+totalVendido())}${abas()}<main>${c}</main>`;
     scrollTo(0,y);
   }
@@ -526,6 +543,7 @@ app.addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   if(b.dataset.u!=null){loginSel=Number(b.dataset.u);loginErro='';desenharLogin();return}
   if(b.dataset.volta){loginSel=null;loginErro='';desenharLogin();return}
+  if(b.dataset.extrato!=null){verExtrato(Number(b.dataset.extrato));return}
   if(b.dataset.reset!=null){pedirReset(Number(b.dataset.reset),b.dataset.nome);return}
   if(b.dataset.p!=null)addProd(Number(b.dataset.p));
   else if(b.dataset.m!=null)abrirMesa(Number(b.dataset.m));
