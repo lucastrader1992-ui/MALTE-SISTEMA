@@ -1500,7 +1500,8 @@ async function atualizarCarrinhoBalcaoUI(){
   const sp=document.getElementById('split-area');if(sp&&sp.style.display!=='none')return;
   const antes=JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]));
   await carregarBalcaoRemoto();
-  if(JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]))!==antes)desenharCarrinhoBalcao();
+  const tela=document.querySelectorAll('#balcao-cart .item-row').length;
+  if(JSON.stringify(balcaoRows.map(r=>[r.id,r.qty]))!==antes||tela!==balcaoItens.length)desenharCarrinhoBalcao();
   atualizarBadgesEstoqueBalcao();
 }
 async function atualizarBadgesEstoqueBalcao(){
@@ -1567,11 +1568,13 @@ async function finalizarBalcao(){
     const{data:venda,error:eV}=await sb.from('vendas').insert({tipo:'Balcão',total,pagamento:payAtual,operador:currentUser.nome}).select().single();
     if(eV||!venda)throw new Error(eV?eV.message:'venda não criada');
     // tira do carrinho compartilhado primeiro (evita outro aparelho finalizar de novo)
-    await sb.from('balcao_itens').delete().in('id',rowsSnap.map(r=>r.id));
+    {const{error:eDel}=await sb.from('balcao_itens').delete().in('id',rowsSnap.map(r=>r.id));if(eDel)console.error('limpar balcao_itens:',eDel.message);}
     await sb.from('venda_itens').insert(itens.map(i=>({venda_id:venda.id,nome:i.nome,qty:i.qty,total:i.preco*i.qty})));
     // baixa só o que ainda não tinha sido baixado ao adicionar
     for(const r of rowsSnap){if(!r.estoque_baixado)await descontarEstoqueItem(r.prod_id,r.qty,'balcao (finalizado)');}
     balcaoRows=[];balcaoItens=[];payAtual='dinheiro';
+    // limpa o carrinho na tela na hora (antes ficava mostrando os produtos já finalizados)
+    await carregarBalcaoRemoto();desenharCarrinhoBalcao();
     atualizarBadgesEstoqueBalcao();
     await verComprovante(venda.id);
   }catch(e){console.error(e);alert('Erro ao finalizar: '+e.message+'. Tente novamente.');}
