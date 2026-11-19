@@ -811,7 +811,7 @@ async function carregarEstadoCaixa(){
 async function carregarCaixaDia(){
   const sel=document.getElementById('caixa-data-sel');const data=sel?sel.value:hojeLocalStr();
   const tsInicio=new Date(`${data}T06:00:00`).toISOString();const dtFim=new Date(`${data}T06:00:00`);dtFim.setDate(dtFim.getDate()+1);dtFim.setHours(5,59,59,999);const tsFim=dtFim.toISOString();
-  const elChk=document.getElementById('caixa-dia-conteudo');if(elChk)elChk.innerHTML='<div class="empty" style="padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
+  const elChk=document.getElementById('caixa-dia-conteudo');if(elChk&&!window._pollRender)elChk.innerHTML='<div class="empty" style="padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
   let V,S,PR,LG;
   try{
     const[rV,rS,rPR,rLG]=await Promise.all([
@@ -849,7 +849,7 @@ async function carregarCaixaDia(){
       ${l.acao==='ABERTURA CAIXA'?'&#128994;':'&#128308;'} <b style="color:var(--text)">${l.acao==='ABERTURA CAIXA'?'Aberto':'Fechado'} por ${l.operador}</b> às ${fmtDateFull(l.criado_em).split(' ')[1]||fmtDateFull(l.criado_em)} ${l.detalhe?'— '+l.detalhe:''}
     </div>`).join('')}
   </div>`;
-  el.innerHTML=logHtml+`
+  const novoCx=logHtml+`
   <div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><button class="btn btn-secondary btn-sm" onclick="gerarPDFCaixaDia()">🖨️ Baixar PDF</button></div>
   <div class="stats-grid">
     <div class="stat-card stat-gold"><div class="stat-label">Total Vendas</div><div class="stat-value">${fmt(totalVendas)}</div><div class="stat-sub">${vendas.length} transações</div></div>
@@ -894,6 +894,7 @@ async function carregarCaixaDia(){
   <div class="table-wrap"><table><thead><tr><th>Horário</th><th>Local</th><th>Produtos</th><th>Total</th><th>Pgto</th><th>Operador</th><th>Comp.</th></tr></thead>
     <tbody>${vendas.map(v=>`<tr><td>${fmtDateFull(v.criado_em)}</td><td>${v.tipo}</td><td style="font-size:11px;color:var(--text2)">${(itensPorVenda[v.id]||[]).length?(itensPorVenda[v.id]||[]).map(i=>`${i.qty}x ${i.nome}`).join(', '):'—'}</td><td style="font-weight:600;color:var(--gold2)">${fmt(v.total)}</td><td><span class="badge badge-blue">${(v.pagamento||'').toUpperCase()}</span></td><td>${v.operador||''}</td><td><button class="btn btn-teal btn-xs" onclick="verComprovante(${v.id})">&#129534;</button></td></tr>`).join('')}</tbody>
   </table></div>`}`;
+  if(el._ult!==novoCx||!window._pollRender){el._ult=novoCx;el.innerHTML=novoCx;}
 }
 async function carregarCaixaPeriodo(){
   const selI=document.getElementById('caixa-periodo-inicio');const selF=document.getElementById('caixa-periodo-fim');
