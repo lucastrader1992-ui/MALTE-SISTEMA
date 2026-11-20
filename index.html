@@ -2521,20 +2521,35 @@ async function novaEntradaBruno(){
     <input type="date" id="bru-data" value="${hojeLocalStr()}" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
   </div>
   <div class="modal-field"><label>Produto</label>
-    <select id="bru-prod" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(142,68,173,0.3);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
-      ${(P||[]).map(p=>`<option value="${p.id}" data-cat="${p.cat}" data-nome="${p.nome}">${p.emoji} ${p.nome} — Estoque: ${p.estoque}</option>`).join('')}
+    <select id="bru-prod" onchange="preencherCustoBruno()" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(142,68,173,0.3);border-radius:var(--radius-sm);color:var(--text);font-size:13px;">
+      ${(P||[]).map(p=>`<option value="${p.id}" data-cat="${p.cat}" data-nome="${p.nome}" data-custo="${Number(p.custo)||0}">${p.emoji} ${p.nome} — Estoque: ${p.estoque}</option>`).join('')}
     </select>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-    <div class="modal-field"><label>Quantidade</label><input type="number" id="bru-qty" value="12" min="1" oninput="calcCustoUnitBruno()"></div>
+    <div class="modal-field"><label>Quantidade</label><input type="number" id="bru-qty" value="12" min="1" oninput="preencherCustoBruno()"></div>
     <div class="modal-field"><label>Custo Total (R$)</label><input type="number" id="bru-custo" value="0" step="0.01" oninput="calcCustoUnitBruno()"></div>
   </div>
   <div class="modal-field"><label>Custo Unitário</label><input type="text" id="bru-custo-unit" readonly value="R$ 0,00" style="background:var(--bg);color:var(--gold2);font-weight:600;cursor:default;"></div>
+  <div id="bru-custo-info" style="font-size:11px;color:var(--text2);margin:-6px 0 10px"></div>
   <div class="modal-field"><label>Observação (opcional)</label><input type="text" id="bru-obs" placeholder="Ex: Compra no atacado, NF 123..."></div>
   <div class="modal-actions">
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
     <button class="btn btn-bruno" onclick="confirmarEntradaBruno()">&#9989; Registrar Entrada</button>
   </div>`);
+  preencherCustoBruno();
+}
+
+// Puxa o preço de compra cadastrado do produto e calcula o custo total (qtd × preço de compra)
+function preencherCustoBruno(){
+  const sel=document.getElementById('bru-prod');if(!sel)return;
+  const opt=sel.options[sel.selectedIndex];
+  const unit=Number(opt?.dataset.custo)||0;
+  const q=parseInt(document.getElementById('bru-qty')?.value)||0;
+  const elC=document.getElementById('bru-custo');
+  if(elC)elC.value=(unit*q).toFixed(2);
+  const info=document.getElementById('bru-custo-info');
+  if(info)info.innerHTML=unit>0?`💡 Custo calculado pelo preço de compra cadastrado (${fmt(unit)}/un). Pode ajustar o total se pagou diferente.`:`<span style="color:var(--orange)">⚠️ Esse produto está sem preço de compra cadastrado. Digite o custo total ou cadastre o preço em Produtos.</span>`;
+  calcCustoUnitBruno();
 }
 
 function calcCustoUnitBruno(){
