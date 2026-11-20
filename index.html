@@ -2459,7 +2459,8 @@ async function renderBruno(){
 
 async function carregarStatsBruno(){
   const{data:E}=await sb.from('entradas_bruno').select('*').order('criado_em',{ascending:false});
-  const entradas=E||[];
+  const zerado=await ultimoZerarSocio('Bruno R');
+  const entradas=(E||[]).filter(e=>!zerado||hojeLocalStr(new Date(e.criado_em))>zerado.data);
   const totalQty=entradas.reduce((s,e)=>s+e.qty,0);
   const totalInvestido=entradas.reduce((s,e)=>s+Number(e.custo),0);
   const totalProdutos=new Set(entradas.map(e=>e.produto)).size;
@@ -2470,6 +2471,10 @@ async function carregarStatsBruno(){
     <div class="stat-card" style="border-color:rgba(142,68,173,0.3)"><div class="stat-label">Unidades Trazidas</div><div class="stat-value" style="color:var(--bruno)">${totalQty}</div></div>
     <div class="stat-card" style="border-color:rgba(142,68,173,0.3)"><div class="stat-label">Total Investido</div><div class="stat-value" style="color:var(--bruno)">${fmt(totalInvestido)}</div></div>
     <div class="stat-card" style="border-color:rgba(142,68,173,0.3)"><div class="stat-label">Produtos Diferentes</div><div class="stat-value" style="color:var(--bruno)">${totalProdutos}</div></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:-4px 0 14px;font-size:12px;color:var(--text2)">
+    <div>${zerado?`🧹 Zerado em <b style="color:#d4a0f0">${fmtDateOnly(zerado.data+'T12:00:00')}</b> — contando só o que entrou depois disso`:'Contando todas as entradas (nunca foi zerado)'}</div>
+    <div style="display:flex;gap:6px">${zerado?`<button class="btn btn-secondary btn-sm" onclick="pedirSenhaAdm('Desfazer o último zerar do Bruno',()=>desfazerZerarSocio('Bruno R'))">↩ Desfazer</button>`:''}<button class="btn btn-bruno btn-sm" onclick="pedirSenhaAdm('Zerar estoque do Bruno',()=>abrirZerarSocio('Bruno R'))">🧹 Zerar estoque do Bruno</button></div>
   </div>
   <div class="alert alert-bruno" style="margin-bottom:18px;">
     &#128279; <b>Integração ativa:</b> Toda entrada registrada aqui é somada ao estoque geral da Malte automaticamente.
@@ -3533,16 +3538,51 @@ function isSocio(n){return !!SOCIOS[n];}
 // 🤝 Estoque do sócio: o que ele trouxe, menos a parte dele nas vendas (proporcional ao estoque dele × o da Malte) e menos o que ele consumiu.
 // Lote novo soma com o que sobrou. Quando o estoque dele zera, a conta recomeça no próximo lote.
 const SOCIO_INICIO_PADRAO='2026-10-28';
+// 🧹 Zerar estoque do sócio: guardado no log_acoes (detalhe "Nome|AAAA-MM-DD"). Tudo até o fim desse dia fica encerrado.
+const ACAO_ZERAR_SOCIO='ZERAR ESTOQUE SOCIO';
+async function ultimoZerarSocio(n){
+  try{const{data,error}=await sb.from('log_acoes').select('id,detalhe,criado_em').eq('acao',ACAO_ZERAR_SOCIO).like('detalhe',n+'|%').order('criado_em',{ascending:false}).limit(1);
+    if(error||!data||!data.length)return null;const d=String(data[0].detalhe).split('|')[1];return /^\d{4}-\d{2}-\d{2}$/.test(d)?{id:data[0].id,data:d}:null;}catch(e){return null;}
+}
+function abrirZerarSocio(n){
+  const nj=n.replace(/'/g,"\\'");
+  openModal(`<h3 style="color:#d4a0f0">🧹 Zerar estoque do ${escFunc(n)}</h3>
+  <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--brunol);border:1px solid rgba(142,68,173,0.3);border-radius:var(--radius-sm);padding:10px;">
+    Use quando ele já vendeu tudo. Tudo até o <b>fim do dia escolhido</b> (entradas, vendas, consumo e vales) sai da conta dele, e a parte dele recomeça do zero na próxima entrada.<br>O estoque geral da Malte e o histórico <b>não mudam</b>.
+  </div>
+  <div class="modal-field"><label>📅 Zerar até o dia</label><input type="date" id="zerar-socio-data" value="${hojeLocalStr()}" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius-sm);color:var(--text);font-size:13px;"></div>
+  <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-bruno" onclick="confirmarZerarSocio('${nj}')">🧹 Zerar</button></div>`);
+}
+async function confirmarZerarSocio(n){
+  const d=document.getElementById('zerar-socio-data')?.value;
+  if(!d){alert('Escolha a data.');return;}
+  try{
+    const{error}=await sb.from('log_acoes').insert({operador:currentUser.nome,acao:ACAO_ZERAR_SOCIO,detalhe:`${n}|${d}`});
+    if(error){alert('Erro ao zerar: '+error.message);return;}
+    try{localStorage.removeItem('malte_socio_lote_'+n);}catch(e){}
+    closeModal();
+    if(currentTab==='bruno'){await carregarStatsBruno();await carregarHistoricoBruno();}else if(typeof renderSocioDetalhe==='function')renderSocioDetalhe(n);
+  }catch(e){alert('Erro: '+e.message);}
+}
+async function desfazerZerarSocio(n){
+  const z=await ultimoZerarSocio(n);if(!z)return;
+  if(!confirm(`Desfazer o zerar de ${fmtDateOnly(z.data+'T12:00:00')}?`))return;
+  try{const{error}=await sb.from('log_acoes').delete().eq('id',z.id);if(error){alert('Erro: '+error.message);return;}
+    if(currentTab==='bruno'){await carregarStatsBruno();}else if(typeof renderSocioDetalhe==='function')renderSocioDetalhe(n);
+  }catch(e){alert('Erro: '+e.message);}
+}
 async function resumoSocio(n){
   const[rE,rP,Lall]=await Promise.all([sb.from('entradas_bruno').select('*').order('criado_em',{ascending:true}),sb.from('produtos').select('*'),carregarLancFunc(n,true)]);
   if(rE.error)throw rE.error;if(rP.error)throw rP.error;
-  const Etodas=rE.data||[],P=rP.data||[];
+  const P=rP.data||[];
   const dia=ts=>hojeLocalStr(new Date(ts));
+  const zerado=await ultimoZerarSocio(n);
+  const Etodas=(rE.data||[]).filter(e=>!zerado||dia(e.criado_em)>zerado.data);
   const datasEnt=[...new Set(Etodas.map(e=>dia(e.criado_em)))].sort();
   let escolhida=null;try{escolhida=localStorage.getItem('malte_socio_lote_'+n);}catch(e){}
   const base=escolhida&&datasEnt.includes(escolhida)?escolhida:(datasEnt.find(d=>d>=SOCIO_INICIO_PADRAO)||datasEnt[datasEnt.length-1]||null);
   const resumoDatas=datasEnt.map(d=>{const es=Etodas.filter(e=>dia(e.criado_em)===d);return{data:d,n:es.length,un:es.reduce((s,e)=>s+(Number(e.qty)||0),0),custo:es.reduce((s,e)=>s+(Number(e.custo)||0),0)};}).reverse();
-  const vazio={E:[],L:[],loteData:base,cicloInicio:base,resumoDatas,itens:[],idsDele:new Set(),investido:0,lucroBruto:0,lucroPrevisto:0,valorBruto:0,valorRestante:0,temTotal:0,credito:0,consumo:0,consumoProprio:0,vales:0,saldo:0};
+  const vazio={E:[],L:[],loteData:base,cicloInicio:base||(zerado?zerado.data:null),zerado,resumoDatas,itens:[],idsDele:new Set(),investido:0,lucroBruto:0,lucroPrevisto:0,valorBruto:0,valorRestante:0,temTotal:0,credito:0,consumo:0,consumoProprio:0,vales:0,saldo:0};
   if(!base)return vazio;
   const precoDe=p=>p.em_promo&&Number(p.preco_promo)>0?Number(p.preco_promo):Number(p.preco)||0;
   const prodDe=nome=>P.find(pp=>normalizarTexto(pp.nome)===normalizarTexto(nome));
@@ -3586,7 +3626,7 @@ async function resumoSocio(n){
   const consumo=Lc.filter(l=>l.tipo==='consumo').reduce((s,l)=>s+Number(l.valor),0);
   const vales=Lc.filter(l=>l.tipo==='vale').reduce((s,l)=>s+Number(l.valor),0);
   const valorBruto=itens.reduce((s,i)=>s+i.valorVenda,0),valorRestante=itens.reduce((s,i)=>s+i.valorRestante,0);
-  return{E:E.filter(e=>e._dia>=ciclo),L:Lc,loteData:ciclo,cicloInicio:ciclo,base,resumoDatas,itens,idsDele:new Set(itens.filter(i=>i.prodId).map(i=>i.prodId)),
+  return{E:E.filter(e=>e._dia>=ciclo),L:Lc,loteData:ciclo,cicloInicio:ciclo,base,zerado,resumoDatas,itens,idsDele:new Set(itens.filter(i=>i.prodId).map(i=>i.prodId)),
     investido:itens.reduce((s,i)=>s+i.custo,0),lucroBruto:itens.reduce((s,i)=>s+i.lucro,0),lucroPrevisto:0,valorBruto,valorRestante,temTotal:itens.reduce((s,i)=>s+i.temAinda,0),
     vendidoTotal:itens.reduce((s,i)=>s+i.vendido,0),valorVendido:itens.reduce((s,i)=>s+i.vendido*i.preco,0),
     credito:valorBruto,consumo,consumoProprio:0,vales,saldo:valorBruto-consumo-vales};
